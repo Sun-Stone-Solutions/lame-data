@@ -109,46 +109,70 @@ recording_state = {
     'notes': '',
     'samples_received': 0,
     'device_status': {},
-    'sync_offsets': {}  # device_id -> {'device_millis': int, 'pi_time': str}
+    'sync_offsets': {},  # device_id -> {'device_millis': int, 'pi_time': str}
 }
 
+# Module-level ref to the listener socket so send_sync_broadcast() can use it
+_listener_sock = None
+# Track device IPs seen by the listener (device_id -> ip)
+_device_addrs = {}
+
+
 def send_sync_broadcast():
-    """Send SYNC broadcast to all sensors on the network."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    try:
-        sock.sendto(b"SYNC", ("255.255.255.255", UDP_PORT))
-        print("Sent SYNC broadcast")
-    finally:
-        sock.close()
+    """Send SYNC to all sensors via unicast to known IPs + broadcast for unknown."""
+    # Unicast to every device IP we've seen — guaranteed to reach them
+    for device_id, ip in _device_addrs.items():
+        if _listener_sock:
+            try:
+                _listener_sock.sendto(b"SYNC", (ip, UDP_PORT))
+                print(f"Sent SYNC unicast to {device_id} at {ip}")
+            except OSError as e:
+                print(f"Failed to send SYNC to {ip}: {e}")
+
+    # Also try broadcast for devices we haven't seen yet
+    if _listener_sock:
+        try:
+            _listener_sock.sendto(b"SYNC", ("255.255.255.255", UDP_PORT))
+            print("Sent SYNC broadcast")
+        except OSError as e:
+            print(f"Broadcast failed (non-fatal): {e}")
 
 
 def udp_listener():
     """Background thread to receive UDP data"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", UDP_PORT))
-    sock.settimeout(1.0)
+    global _listener_sock
+    _listener_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    _listener_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    _listener_sock.bind(("0.0.0.0", UDP_PORT))
+    _listener_sock.settimeout(1.0)
 
     while True:
         try:
-            data, addr = sock.recvfrom(2048)
+            data, addr = _listener_sock.recvfrom(2048)
+            sender_ip = addr[0]
             decoded = data.decode('utf-8').strip()
+
+            # Ignore our own broadcast loopback
+            if decoded == "SYNC":
+                continue
 
             if decoded.startswith("SYNC_ACK,"):
                 parts = decoded.split(',')
                 if len(parts) >= 3:
                     device_id = parts[1]
                     device_millis = int(parts[2])
+                    _device_addrs[device_id] = sender_ip
                     recording_state['sync_offsets'][device_id] = {
                         'device_millis': device_millis,
                         'pi_time': datetime.datetime.now().isoformat()
                     }
-                    print(f"SYNC_ACK from {device_id}: millis={device_millis}")
+                    print(f"SYNC_ACK from {device_id} ({sender_ip}): millis={device_millis}")
             elif decoded.startswith("BAT,"):
                 parts = decoded.split(',')
-                device_id = parts[1]  # Keep as string (4-char hex from MAC address)
+                device_id = parts[1]
                 voltage = float(parts[2])
                 percent = float(parts[3])
+                _device_addrs[device_id] = sender_ip
                 recording_state['device_status'][device_id] = {
                     'voltage': voltage,
                     'percent': percent,
@@ -157,6 +181,12 @@ def udp_listener():
             elif recording_state['is_recording'] and recording_state['recorder']:
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
                 samples = decoded.split('|')
+
+                # Track device IP once from first sample in batch
+                first = samples[0].split(',', 2) if samples else []
+                if len(first) >= 2:
+                    _device_addrs[first[0]] = sender_ip
+
                 for sample in samples:
                     if sample.strip() and not sample.startswith('BAT'):
                         recording_state['recorder'].append(f"{timestamp},{sample}\n")
