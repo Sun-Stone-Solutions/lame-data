@@ -43,10 +43,11 @@ unsigned long lastButtonCheck = 0;
 const unsigned long BUTTON_CHECK_INTERVAL = 1000;  // ms
 
 String getDeviceID() {
-  // Get last 4 hex digits of MAC address as unique device ID
-  uint64_t mac = ESP.getEfuseMac();
-  char id[5];
-  sprintf(id, "%04X", (uint16_t)(mac & 0xFFFF));
+  // Use MAC address bytes 3, 4, 5 as unique device ID
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char id[7];
+  sprintf(id, "%02X%02X%02X", mac[3], mac[4], mac[5]);
   return String(id);
 }
 
