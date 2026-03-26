@@ -148,7 +148,7 @@ def udp_listener():
 
     while True:
         try:
-            data, addr = _listener_sock.recvfrom(2048)
+            data, addr = _listener_sock.recvfrom(4096)
             sender_ip = addr[0]
             decoded = data.decode('utf-8').strip()
 
@@ -306,7 +306,7 @@ def start_recording():
         f"# Notes: {notes}",
         f"# Start Time: {datetime.datetime.now().isoformat()}",
         f"# Device Config: {json.dumps(device_config['devices'])}",
-        "timestamp,device_id,millis_time,accel_x,accel_y,accel_z"
+        "timestamp,device_id,millis_time,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z"
     ]
 
     recorder.start(headers)
@@ -440,7 +440,7 @@ def get_session_data(filename):
             continue
 
         parts = line.split(',')
-        if len(parts) >= 6:  # timestamp,device_id,sequence,x,y,z
+        if len(parts) >= 6:  # timestamp,device_id,sequence,x,y,z[,gx,gy,gz]
             try:
                 timestamp = parts[0]
                 device_id = parts[1]
@@ -456,6 +456,9 @@ def get_session_data(filename):
                         'accel_y': [],
                         'accel_z': [],
                         'magnitude': [],
+                        'gyro_x': [],
+                        'gyro_y': [],
+                        'gyro_z': [],
                         'config': device_config.get(device_id, {})
                     }
 
@@ -464,6 +467,12 @@ def get_session_data(filename):
                 devices[device_id]['accel_y'].append(y)
                 devices[device_id]['accel_z'].append(z)
                 devices[device_id]['magnitude'].append(mag)
+
+                if len(parts) >= 9:
+                    devices[device_id]['gyro_x'].append(float(parts[6]))
+                    devices[device_id]['gyro_y'].append(float(parts[7]))
+                    devices[device_id]['gyro_z'].append(float(parts[8]))
+
                 sample_count += 1
 
             except (ValueError, IndexError) as e:
@@ -602,7 +611,7 @@ def parse_csv_for_upload(filepath):
                         if device_id in device_config:
                             position = device_config[device_id].get('position', '')
 
-                        readings.append({
+                        reading = {
                             'session_id': session_id,
                             'device_id': device_id,
                             'position': position,
@@ -612,7 +621,15 @@ def parse_csv_for_upload(filepath):
                             'accel_y': y,
                             'accel_z': z,
                             'magnitude': mag,
-                        })
+                            'gyro_x': 0.0,
+                            'gyro_y': 0.0,
+                            'gyro_z': 0.0,
+                        }
+                        if len(parts) >= 9:
+                            reading['gyro_x'] = float(parts[6])
+                            reading['gyro_y'] = float(parts[7])
+                            reading['gyro_z'] = float(parts[8])
+                        readings.append(reading)
                     except (ValueError, IndexError):
                         continue
 

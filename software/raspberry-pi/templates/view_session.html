@@ -43,6 +43,9 @@
         .axis-x { background: rgb(255, 99, 132); }
         .axis-y { background: rgb(54, 162, 235); }
         .axis-z { background: rgb(75, 192, 192); }
+        .axis-gx { background: rgb(255, 159, 64); }
+        .axis-gy { background: rgb(153, 102, 255); }
+        .axis-gz { background: rgb(255, 205, 86); }
         details {
             margin-top: 1rem;
         }
@@ -162,6 +165,30 @@
                     </div>
                 </div>
             </details>
+
+            <details>
+                <summary>Show Gyroscope X/Y/Z</summary>
+                <div class="xyz-grid">
+                    <div class="xyz-chart">
+                        <h4><span class="axis-label axis-gx"></span>Gyro X</h4>
+                        <div class="chart-container-small">
+                            <canvas id="chartGyroX"></canvas>
+                        </div>
+                    </div>
+                    <div class="xyz-chart">
+                        <h4><span class="axis-label axis-gy"></span>Gyro Y</h4>
+                        <div class="chart-container-small">
+                            <canvas id="chartGyroY"></canvas>
+                        </div>
+                    </div>
+                    <div class="xyz-chart">
+                        <h4><span class="axis-label axis-gz"></span>Gyro Z</h4>
+                        <div class="chart-container-small">
+                            <canvas id="chartGyroZ"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </details>
         </article>
 
         <article>
@@ -246,6 +273,7 @@
     <script>
         const filename = '{{ filename }}';
         let chartMag, chartX, chartY, chartZ;
+        let chartGyroX, chartGyroY, chartGyroZ;
         let chartVariance, chartFrequency, chartMoving, chartGaitScore;
         let sessionData = null;
         let currentSegments = null;
@@ -483,6 +511,34 @@
                 },
                 options: smallOptions
             });
+
+            // Gyroscope charts
+            if (firstDeviceData.gyro_x && firstDeviceData.gyro_x.length > 0) {
+                const gyroOptions = {
+                    ...commonOptions,
+                    scales: {
+                        x: { display: false },
+                        y: { display: true, title: { display: true, text: 'deg/s' } }
+                    },
+                    plugins: { legend: { display: false }, zoom: zoomOptions }
+                };
+
+                chartGyroX = new Chart(document.getElementById('chartGyroX'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro X', data: firstDeviceData.gyro_x, borderColor: 'rgb(255, 159, 64)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+                chartGyroY = new Chart(document.getElementById('chartGyroY'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro Y', data: firstDeviceData.gyro_y, borderColor: 'rgb(153, 102, 255)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+                chartGyroZ = new Chart(document.getElementById('chartGyroZ'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro Z', data: firstDeviceData.gyro_z, borderColor: 'rgb(255, 205, 86)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+            }
         }
 
         function renderSingleDeviceCharts(data) {
@@ -588,6 +644,33 @@
                 },
                 options: smallOptions
             });
+
+            // Gyroscope charts (legacy single-device)
+            if (data.gyro_x && data.gyro_x.length > 0) {
+                const gyroOptions = {
+                    ...commonOptions,
+                    scales: {
+                        x: { display: false },
+                        y: { display: true, title: { display: true, text: 'deg/s' } }
+                    }
+                };
+
+                chartGyroX = new Chart(document.getElementById('chartGyroX'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro X', data: data.gyro_x, borderColor: 'rgb(255, 159, 64)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+                chartGyroY = new Chart(document.getElementById('chartGyroY'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro Y', data: data.gyro_y, borderColor: 'rgb(153, 102, 255)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+                chartGyroZ = new Chart(document.getElementById('chartGyroZ'), {
+                    type: 'line',
+                    data: { labels, datasets: [{ label: 'Gyro Z', data: data.gyro_z, borderColor: 'rgb(255, 205, 86)', borderWidth: 1, pointRadius: 0 }] },
+                    options: gyroOptions
+                });
+            }
         }
 
         function downloadCSV() {

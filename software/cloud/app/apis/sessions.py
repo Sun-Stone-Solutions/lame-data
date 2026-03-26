@@ -75,13 +75,17 @@ class SensorReadingRecord(BaseModel):
     accel_y: float
     accel_z: float
     magnitude: float
+    gyro_x: float
+    gyro_y: float
+    gyro_z: float
 
 def get_session_detail(client: MooseClient, params: SessionDetailParams) -> list[SensorReadingRecord]:
     downsample = max(1, params.downsample or 1)
     query = """
     SELECT session_id, device_id, position, millis_time,
            toString(timestamp) as timestamp,
-           accel_x, accel_y, accel_z, magnitude
+           accel_x, accel_y, accel_z, magnitude,
+           gyro_x, gyro_y, gyro_z
     FROM {table}
     WHERE session_id = {session_id}
     AND rowNumberInBlock() % {downsample} = 0

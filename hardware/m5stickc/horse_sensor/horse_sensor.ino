@@ -17,6 +17,7 @@ const int SEND_INTERVAL = 100;
 
 WiFiUDP udp;
 float accX, accY, accZ;
+float gyroX, gyroY, gyroZ;
 unsigned long lastBatteryUpdate = 0;
 
 // Sync state
@@ -238,10 +239,11 @@ void loop() {
     }
 
     M5.IMU.getAccelData(&accX, &accY, &accZ);
+    M5.IMU.getGyroData(&gyroX, &gyroY, &gyroZ);
 
-    char sample[100];
-    snprintf(sample, sizeof(sample), "%s,%lu,%.3f,%.3f,%.3f",
-             deviceID.c_str(), millis(), accX, accY, accZ);
+    char sample[128];
+    snprintf(sample, sizeof(sample), "%s,%lu,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f",
+             deviceID.c_str(), millis(), accX, accY, accZ, gyroX, gyroY, gyroZ);
     batchBuffer[batchCount] = String(sample);
     batchCount++;
     

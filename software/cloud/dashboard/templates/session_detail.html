@@ -21,6 +21,9 @@
     .axis-x { background: rgb(255, 99, 132); }
     .axis-y { background: rgb(54, 162, 235); }
     .axis-z { background: rgb(75, 192, 192); }
+    .axis-gx { background: rgb(255, 159, 64); }
+    .axis-gy { background: rgb(153, 102, 255); }
+    .axis-gz { background: rgb(255, 205, 86); }
     .xyz-grid {
         display: grid;
         grid-template-columns: 1fr;
@@ -119,6 +122,24 @@
                 </div>
             </div>
         </details>
+
+        <details>
+            <summary>Show Gyroscope X/Y/Z</summary>
+            <div class="xyz-grid">
+                <div class="xyz-chart">
+                    <h4><span class="axis-label axis-gx"></span>Gyro X</h4>
+                    <div class="chart-container-small"><canvas id="chartGyroX"></canvas></div>
+                </div>
+                <div class="xyz-chart">
+                    <h4><span class="axis-label axis-gy"></span>Gyro Y</h4>
+                    <div class="chart-container-small"><canvas id="chartGyroY"></canvas></div>
+                </div>
+                <div class="xyz-chart">
+                    <h4><span class="axis-label axis-gz"></span>Gyro Z</h4>
+                    <div class="chart-container-small"><canvas id="chartGyroZ"></canvas></div>
+                </div>
+            </div>
+        </details>
     </article>
 
     <article>
@@ -179,6 +200,7 @@
 <script>
     const sessionId = '{{ session_id }}';
     let chartMag, chartX, chartY, chartZ;
+    let chartGyroX, chartGyroY, chartGyroZ;
     let deviceData = {};
     let currentSegments = null;
 
@@ -252,13 +274,17 @@
                     if (!deviceData[did]) {
                         deviceData[did] = {
                             position: row.position,
-                            magnitude: [], accel_x: [], accel_y: [], accel_z: []
+                            magnitude: [], accel_x: [], accel_y: [], accel_z: [],
+                            gyro_x: [], gyro_y: [], gyro_z: []
                         };
                     }
                     deviceData[did].magnitude.push(row.magnitude);
                     deviceData[did].accel_x.push(row.accel_x);
                     deviceData[did].accel_y.push(row.accel_y);
                     deviceData[did].accel_z.push(row.accel_z);
+                    deviceData[did].gyro_x.push(row.gyro_x);
+                    deviceData[did].gyro_y.push(row.gyro_y);
+                    deviceData[did].gyro_z.push(row.gyro_z);
                 });
 
                 const deviceIds = Object.keys(deviceData);
@@ -340,6 +366,31 @@
             data: { labels, datasets: [{ label: 'Z', data: first.accel_z, borderColor: 'rgb(75,192,192)', borderWidth: 1, pointRadius: 0 }] },
             options: smallOptions
         });
+
+        // Gyroscope charts
+        if (first.gyro_x && first.gyro_x.length > 0) {
+            const gyroOptions = {
+                ...commonOptions,
+                scales: { x: { display: false }, y: { display: true, title: { display: true, text: 'deg/s' } } },
+                plugins: { legend: { display: false }, zoom: zoomOptions }
+            };
+
+            chartGyroX = new Chart(document.getElementById('chartGyroX'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: 'Gyro X', data: first.gyro_x, borderColor: 'rgb(255,159,64)', borderWidth: 1, pointRadius: 0 }] },
+                options: gyroOptions
+            });
+            chartGyroY = new Chart(document.getElementById('chartGyroY'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: 'Gyro Y', data: first.gyro_y, borderColor: 'rgb(153,102,255)', borderWidth: 1, pointRadius: 0 }] },
+                options: gyroOptions
+            });
+            chartGyroZ = new Chart(document.getElementById('chartGyroZ'), {
+                type: 'line',
+                data: { labels, datasets: [{ label: 'Gyro Z', data: first.gyro_z, borderColor: 'rgb(255,205,86)', borderWidth: 1, pointRadius: 0 }] },
+                options: gyroOptions
+            });
+        }
     }
 
     function analyzeGait() {
