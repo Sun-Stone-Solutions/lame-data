@@ -174,10 +174,12 @@ def udp_listener():
                 device_id = parts[1]
                 voltage = float(parts[2])
                 percent = float(parts[3])
+                fifo_overflows = int(parts[4]) if len(parts) >= 5 else 0
                 _device_addrs[device_id] = sender_ip
                 recording_state['device_status'][device_id] = {
                     'voltage': voltage,
                     'percent': percent,
+                    'fifo_overflows': fifo_overflows,
                     'last_seen': datetime.datetime.now().isoformat()
                 }
             elif recording_state['is_recording'] and recording_state['recorder']:
