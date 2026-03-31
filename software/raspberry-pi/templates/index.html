@@ -5,13 +5,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/static/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/theme.css">
     <style>
         header {
             text-align: center;
-            margin-bottom: 2rem;
+            margin-bottom: 1rem;
         }
         header h1 {
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.75rem;
         }
         .status-indicator {
             font-size: 1.5rem;
@@ -20,14 +21,6 @@
             border-radius: var(--pico-border-radius);
             text-align: center;
             margin: 1rem 0;
-        }
-        .status-recording {
-            background: var(--pico-primary-background);
-            color: var(--pico-primary-inverse);
-        }
-        .status-stopped {
-            background: #C44638;
-            color: white;
         }
         .metric-row {
             display: flex;
@@ -42,10 +35,6 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
-        }
-        .btn-stop {
-            --pico-background-color: #C44638;
-            --pico-border-color: #C44638;
         }
 
         /* Horse diagram */
@@ -80,24 +69,24 @@
             opacity: 0.85;
         }
         .pos-none {
-            background: #333;
-            color: #777;
-            border-color: #444;
+            background: var(--ctp-surface0);
+            color: var(--ctp-overlay0);
+            border-color: var(--ctp-surface1);
         }
         .pos-red {
-            background: rgba(196, 70, 56, 0.25);
-            color: #e8756a;
-            border-color: #C44638;
+            background: color-mix(in srgb, var(--ctp-red) 20%, var(--ctp-base));
+            color: var(--ctp-red);
+            border-color: var(--ctp-red);
         }
         .pos-yellow {
-            background: rgba(240, 173, 78, 0.25);
-            color: #f0c36e;
-            border-color: #f0ad4e;
+            background: color-mix(in srgb, var(--ctp-yellow) 20%, var(--ctp-base));
+            color: var(--ctp-yellow);
+            border-color: var(--ctp-yellow);
         }
         .pos-green {
-            background: rgba(46, 204, 113, 0.2);
-            color: #5ee8a0;
-            border-color: #2ecc71;
+            background: color-mix(in srgb, var(--ctp-green) 20%, var(--ctp-base));
+            color: var(--ctp-green);
+            border-color: var(--ctp-green);
         }
         /* Grid placement */
         .pos-poll     { grid-column: 2; }
@@ -113,12 +102,11 @@
     <main class="container">
         <header>
             <h1>Lame Data</h1>
-            <nav>
-                <ul>
-                    <li><a href="/sessions">Sessions</a></li>
-                    <li><a href="/settings">Settings</a></li>
-                </ul>
-            </nav>
+            <div class="nav-bar">
+                <a href="/" class="active">Recorder</a>
+                <a href="/sessions">Sessions</a>
+                <a href="/settings">Settings</a>
+            </div>
         </header>
 
         <article>

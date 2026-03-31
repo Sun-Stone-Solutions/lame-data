@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/static/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/theme.css">
     <style>
         .session-card {
             padding: 1rem;
@@ -125,12 +126,12 @@
 <body>
     <main class="container">
         <header>
-            <h1>Past Sessions</h1>
-            <nav>
-                <ul>
-                    <li><a href="/">Back to Recorder</a></li>
-                </ul>
-            </nav>
+            <h1>Sessions</h1>
+            <div class="nav-bar">
+                <a href="/">Recorder</a>
+                <a href="/sessions" class="active">Sessions</a>
+                <a href="/settings">Settings</a>
+            </div>
         </header>
 
         <article>

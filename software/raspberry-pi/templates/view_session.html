@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/static/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/theme.css">
     <script src="/static/js/chart.umd.min.js"></script>
     <script src="/static/js/hammer.min.js"></script>
     <script src="/static/js/chartjs-plugin-zoom.min.js"></script>
@@ -39,13 +40,13 @@
             border-radius: 2px;
             margin-right: 0.5rem;
         }
-        .axis-mag { background: rgb(156, 39, 176); }
-        .axis-x { background: rgb(255, 99, 132); }
-        .axis-y { background: rgb(54, 162, 235); }
-        .axis-z { background: rgb(75, 192, 192); }
-        .axis-gx { background: rgb(255, 159, 64); }
-        .axis-gy { background: rgb(153, 102, 255); }
-        .axis-gz { background: rgb(255, 205, 86); }
+        .axis-mag { background: var(--ctp-mauve); }
+        .axis-x { background: var(--ctp-red); }
+        .axis-y { background: var(--ctp-blue); }
+        .axis-z { background: var(--ctp-teal); }
+        .axis-gx { background: var(--ctp-peach); }
+        .axis-gy { background: var(--ctp-lavender); }
+        .axis-gz { background: var(--ctp-yellow); }
         details {
             margin-top: 1rem;
         }
@@ -115,12 +116,11 @@
     <main class="container">
         <header>
             <h1>Session Viewer</h1>
-            <nav>
-                <ul>
-                    <li><a href="/sessions">Back to Sessions</a></li>
-                    <li><a href="/">Recorder</a></li>
-                </ul>
-            </nav>
+            <div class="nav-bar">
+                <a href="/">Recorder</a>
+                <a href="/sessions">Sessions</a>
+                <a href="/settings">Settings</a>
+            </div>
         </header>
 
         <article>
@@ -301,18 +301,18 @@
                     let lineColor, bgColor, labelText;
                     if (segType === 'stationary') {
                         // Transitioning TO stationary (movement stopped)
-                        lineColor = 'rgba(108, 117, 125, 0.8)';  // Gray
-                        bgColor = 'rgba(108, 117, 125, 0.9)';
+                        lineColor = '#7f849ccc';  // Gray
+                        bgColor = '#7f849ce6';
                         labelText = '⏸ Stop';
                     } else if (prevType === 'stationary') {
                         // Transitioning FROM stationary (movement started)
-                        lineColor = 'rgba(40, 167, 69, 0.8)';  // Green
-                        bgColor = 'rgba(40, 167, 69, 0.9)';
+                        lineColor = '#a6e3a1cc';  // Green
+                        bgColor = '#a6e3a1e6';
                         labelText = '▶ Start';
                     } else {
                         // Gait change within movement
-                        lineColor = 'rgba(255, 193, 7, 0.8)';  // Amber
-                        bgColor = 'rgba(255, 193, 7, 0.9)';
+                        lineColor = '#f9e2afcc';  // Amber
+                        bgColor = '#f9e2afe6';
                         labelText = `Gait ${i + 1}`;
                     }
 
@@ -474,7 +474,7 @@
                     datasets: [{
                         label: 'X',
                         data: firstDeviceData.accel_x,
-                        borderColor: 'rgb(255, 99, 132)',
+                        borderColor: '#f38ba8',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -489,7 +489,7 @@
                     datasets: [{
                         label: 'Y',
                         data: firstDeviceData.accel_y,
-                        borderColor: 'rgb(54, 162, 235)',
+                        borderColor: '#89b4fa',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -504,7 +504,7 @@
                     datasets: [{
                         label: 'Z',
                         data: firstDeviceData.accel_z,
-                        borderColor: 'rgb(75, 192, 192)',
+                        borderColor: '#94e2d5',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -527,17 +527,17 @@
 
                 chartGyroX = new Chart(document.getElementById('chartGyroX'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro X', data: gyroDevice.gyro_x, borderColor: 'rgb(255, 159, 64)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro X', data: gyroDevice.gyro_x, borderColor: '#fab387', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
                 chartGyroY = new Chart(document.getElementById('chartGyroY'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro Y', data: gyroDevice.gyro_y, borderColor: 'rgb(153, 102, 255)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro Y', data: gyroDevice.gyro_y, borderColor: '#b4befe', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
                 chartGyroZ = new Chart(document.getElementById('chartGyroZ'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro Z', data: gyroDevice.gyro_z, borderColor: 'rgb(255, 205, 86)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro Z', data: gyroDevice.gyro_z, borderColor: '#f9e2af', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
             }
@@ -591,8 +591,8 @@
                     datasets: [{
                         label: 'Magnitude',
                         data: data.magnitude,
-                        borderColor: 'rgb(156, 39, 176)',
-                        backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                        borderColor: '#cba6f7',
+                        backgroundColor: '#cba6f71a',
                         borderWidth: 1,
                         pointRadius: 0,
                         fill: true
@@ -609,7 +609,7 @@
                     datasets: [{
                         label: 'X',
                         data: data.accel_x,
-                        borderColor: 'rgb(255, 99, 132)',
+                        borderColor: '#f38ba8',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -624,7 +624,7 @@
                     datasets: [{
                         label: 'Y',
                         data: data.accel_y,
-                        borderColor: 'rgb(54, 162, 235)',
+                        borderColor: '#89b4fa',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -639,7 +639,7 @@
                     datasets: [{
                         label: 'Z',
                         data: data.accel_z,
-                        borderColor: 'rgb(75, 192, 192)',
+                        borderColor: '#94e2d5',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -660,17 +660,17 @@
 
                 chartGyroX = new Chart(document.getElementById('chartGyroX'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro X', data: data.gyro_x, borderColor: 'rgb(255, 159, 64)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro X', data: data.gyro_x, borderColor: '#fab387', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
                 chartGyroY = new Chart(document.getElementById('chartGyroY'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro Y', data: data.gyro_y, borderColor: 'rgb(153, 102, 255)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro Y', data: data.gyro_y, borderColor: '#b4befe', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
                 chartGyroZ = new Chart(document.getElementById('chartGyroZ'), {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Gyro Z', data: data.gyro_z, borderColor: 'rgb(255, 205, 86)', borderWidth: 1, pointRadius: 0 }] },
+                    data: { labels, datasets: [{ label: 'Gyro Z', data: data.gyro_z, borderColor: '#f9e2af', borderWidth: 1, pointRadius: 0 }] },
                     options: gyroOptions
                 });
             }
@@ -771,13 +771,13 @@
                     datasets: [{
                         label: 'Variance',
                         data: debug.variances,
-                        borderColor: 'rgb(54, 162, 235)',
+                        borderColor: '#89b4fa',
                         borderWidth: 1,
                         pointRadius: 0
                     }, {
                         label: 'Movement Threshold',
                         data: Array(labels.length).fill(params.movement_threshold),
-                        borderColor: 'rgba(255, 99, 132, 0.7)',
+                        borderColor: '#f38ba8b3',
                         borderWidth: 2,
                         borderDash: [5, 5],
                         pointRadius: 0
@@ -794,7 +794,7 @@
                     datasets: [{
                         label: 'Frequency',
                         data: debug.frequencies,
-                        borderColor: 'rgb(75, 192, 192)',
+                        borderColor: '#94e2d5',
                         borderWidth: 1,
                         pointRadius: 0
                     }]
@@ -810,8 +810,8 @@
                     datasets: [{
                         label: 'Moving',
                         data: debug.is_moving.map(v => v ? 1 : 0),
-                        borderColor: 'rgb(40, 167, 69)',
-                        backgroundColor: 'rgba(40, 167, 69, 0.3)',
+                        borderColor: '#a6e3a1',
+                        backgroundColor: '#a6e3a14d',
                         borderWidth: 1,
                         pointRadius: 0,
                         fill: true,
@@ -829,13 +829,13 @@
                     datasets: [{
                         label: 'Gait Score',
                         data: debug.gait_change_score,
-                        borderColor: 'rgb(255, 193, 7)',
+                        borderColor: '#f9e2af',
                         borderWidth: 1,
                         pointRadius: 0
                     }, {
                         label: 'Detection Threshold',
                         data: Array(labels.length).fill(0.4),
-                        borderColor: 'rgba(255, 99, 132, 0.7)',
+                        borderColor: '#f38ba8b3',
                         borderWidth: 2,
                         borderDash: [5, 5],
                         pointRadius: 0
