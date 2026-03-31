@@ -101,6 +101,7 @@
                                 `<option value="${pos.id}" ${device.position === pos.id ? 'selected' : ''}>${pos.label}</option>`
                             ).join('')}
                         </select>
+                        <button class="outline secondary" style="margin-top:0.5rem;padding:0.2rem 0.6rem;font-size:0.75rem;" onclick="removeDevice('${deviceId}')">Remove Sensor</button>
                     </div>
                 `;
             }
@@ -110,6 +111,18 @@
             }
 
             grid.innerHTML = html;
+        }
+
+        async function removeDevice(deviceId) {
+            if (!confirm(`Remove sensor ${deviceId}? It will reappear if it connects again.`)) return;
+            allDeviceIds.delete(deviceId);
+            delete deviceConfig.devices[deviceId];
+            await fetch('/api/device_config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(deviceConfig)
+            });
+            renderDeviceGrid();
         }
 
         async function saveDeviceConfig() {
