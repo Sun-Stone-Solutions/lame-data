@@ -29,7 +29,10 @@ Thumbs.db
 *.log
 
 # Hardware config (contains credentials)
-hardware/m5stickc/config.h
+**/config.h
+
+# IDE (Theia)
+.theia/
 
 # Software config (contains credentials)
 software/raspberry-pi/.env
