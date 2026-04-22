@@ -28,9 +28,37 @@
             gap: 0.5rem;
             margin-bottom: 0.75rem;
         }
+        .protocol-card[data-expanded="false"] .protocol-header {
+            margin-bottom: 0;
+        }
         .protocol-header input[type="text"] {
             flex: 1;
             margin: 0;
+        }
+        .protocol-name-display {
+            flex: 1;
+            font-weight: bold;
+            font-size: 1.05rem;
+            cursor: pointer;
+            padding: 0.25rem 0;
+        }
+        .protocol-step-count {
+            color: var(--pico-muted-color);
+            font-size: 0.85rem;
+            margin-right: 0.25rem;
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem 0.4rem;
+            margin: 0;
+            font-size: 1rem;
+            color: var(--pico-muted-color);
+            width: 2rem;
+        }
+        .expand-btn:hover {
+            color: var(--pico-color);
         }
         .fav-btn {
             background: none;
@@ -105,7 +133,6 @@
             <div class="nav-bar">
                 <a href="/">Recorder</a>
                 <a href="/sessions">Sessions</a>
-                <a href="/protocols" class="active">Protocols</a>
                 <a href="/settings">Settings</a>
             </div>
         </header>
@@ -122,6 +149,9 @@
 
     <script>
         let protocols = [];
+        // Which protocol cards are currently expanded. Default: all collapsed,
+        // so the page stays short when you have many protocols.
+        const expanded = new Set();
 
         function escapeHtml(s) {
             return (s || '').replace(/[&<>"']/g, c =>
@@ -140,6 +170,12 @@
             const response = await fetch('/api/protocols');
             const data = await response.json();
             protocols = data.protocols || [];
+            // Prune expanded IDs for protocols that no longer exist (deleted
+            // in another tab, etc.).
+            const liveIds = new Set(protocols.map(p => p.id));
+            for (const id of [...expanded]) {
+                if (!liveIds.has(id)) expanded.delete(id);
+            }
             render();
         }
 
@@ -156,6 +192,40 @@
         }
 
         function renderCard(proto) {
+            const isExpanded = expanded.has(proto.id);
+            const stepCount = (proto.steps || []).length;
+
+            const favButton = `
+                <button class="fav-btn ${proto.is_favorite ? 'active' : ''}"
+                        onclick="event.stopPropagation(); toggleFavorite('${proto.id}')"
+                        title="${proto.is_favorite ? 'Unfavorite' : 'Favorite (pins to recorder)'}">
+                    ${proto.is_favorite ? '&#9733;' : '&#9734;'}
+                </button>`;
+
+            const expandButton = `
+                <button class="expand-btn" onclick="toggleExpanded('${proto.id}')"
+                        title="${isExpanded ? 'Collapse' : 'Expand'}">
+                    ${isExpanded ? '&#9662;' : '&#9656;'}
+                </button>`;
+
+            // Collapsed header: click the name area to expand. Favorite + expand
+            // still work independently.
+            if (!isExpanded) {
+                return `
+                    <div class="protocol-card ${proto.is_favorite ? 'is-favorite' : ''}"
+                         data-proto-id="${proto.id}" data-expanded="false">
+                        <div class="protocol-header">
+                            ${favButton}
+                            ${expandButton}
+                            <div class="protocol-name-display" onclick="toggleExpanded('${proto.id}')">
+                                ${escapeHtml(proto.name)}
+                            </div>
+                            <span class="protocol-step-count">${stepCount} step${stepCount === 1 ? '' : 's'}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
             const stepsHtml = (proto.steps || []).map((step, idx) => `
                 <div class="step-row">
                     <button class="secondary outline" onclick="moveStep('${proto.id}', ${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move up">&uarr;</button>
@@ -167,13 +237,11 @@
             `).join('');
 
             return `
-                <div class="protocol-card ${proto.is_favorite ? 'is-favorite' : ''}" data-proto-id="${proto.id}">
+                <div class="protocol-card ${proto.is_favorite ? 'is-favorite' : ''}"
+                     data-proto-id="${proto.id}" data-expanded="true">
                     <div class="protocol-header">
-                        <button class="fav-btn ${proto.is_favorite ? 'active' : ''}"
-                                onclick="toggleFavorite('${proto.id}')"
-                                title="${proto.is_favorite ? 'Unfavorite' : 'Favorite (pins to recorder)'}">
-                            ${proto.is_favorite ? '&#9733;' : '&#9734;'}
-                        </button>
+                        ${favButton}
+                        ${expandButton}
                         <input type="text" value="${escapeHtml(proto.name)}"
                                data-proto="${proto.id}" data-field="name" placeholder="Protocol name">
                     </div>
@@ -187,6 +255,26 @@
                     </div>
                 </div>
             `;
+        }
+
+        function toggleExpanded(protoId) {
+            if (expanded.has(protoId)) {
+                // Capture any in-progress edits before collapsing destroys the inputs.
+                syncLocalFromDom(protoId);
+                expanded.delete(protoId);
+            } else {
+                // Preserve edits in OTHER currently-expanded cards before re-render
+                // wipes the DOM.
+                syncAllExpanded();
+                expanded.add(protoId);
+            }
+            render();
+        }
+
+        function syncAllExpanded() {
+            for (const id of expanded) {
+                syncLocalFromDom(id);
+            }
         }
 
         function collectEdits(protoId) {
@@ -224,6 +312,10 @@
                 toast(err.error || 'Failed to create protocol');
                 return;
             }
+            // Auto-expand a freshly-created protocol so the user can fill in
+            // its steps without an extra click.
+            const body = await response.json();
+            if (body && body.id) expanded.add(body.id);
             await loadProtocols();
         }
 
@@ -282,7 +374,7 @@
         }
 
         function addStep(protoId) {
-            syncLocalFromDom(protoId);
+            syncAllExpanded();
             const proto = protocols.find(p => p.id === protoId);
             if (!proto) return;
             proto.steps = proto.steps || [];
@@ -294,7 +386,7 @@
         }
 
         function removeStep(protoId, stepId) {
-            syncLocalFromDom(protoId);
+            syncAllExpanded();
             const proto = protocols.find(p => p.id === protoId);
             if (!proto) return;
             proto.steps = (proto.steps || []).filter(s => s.id !== stepId);
@@ -302,7 +394,7 @@
         }
 
         function moveStep(protoId, idx, delta) {
-            syncLocalFromDom(protoId);
+            syncAllExpanded();
             const proto = protocols.find(p => p.id === protoId);
             if (!proto) return;
             const steps = proto.steps || [];
