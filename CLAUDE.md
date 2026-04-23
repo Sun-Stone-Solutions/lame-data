@@ -49,6 +49,17 @@ Files the running app mutates at runtime (`software/raspberry-pi/protocols.json`
 
 If you add a new file that falls into this category (app writes to it at runtime, but we also want sensible first-boot content), follow the same pattern: seed in code, gitignore the runtime path, add to `RUNTIME_STATE_FILES` in `upgrade.sh`. Don't check the runtime file in — the moment it diverges between upstream and a deployed Pi, `git pull` breaks.
 
+### Changing the shape of a runtime-state file
+
+Because the files live per-Pi, code can't push a new format through `git pull`. Every runtime JSON carries a `"schema_version": N` integer and goes through a `_migrate_*` function on load (`load_protocols` / `load_device_config` in `horse_recorder.py`). When you change the shape:
+
+1. Bump `PROTOCOLS_SCHEMA_VERSION` or `DEVICE_CONFIG_SCHEMA_VERSION` in `horse_recorder.py`.
+2. Add an `if version < N:` block to the corresponding `_migrate_*` — mutate data in-place, then bump `version = N`. Keep it idempotent.
+3. Update the in-code default (`DEFAULT_PROTOCOLS` or the dict returned by `load_device_config()` on the no-file path) so fresh installs skip the migration.
+4. Add a test in `tests/test_helpers.py` that starts from the old shape and asserts the upgrade — pattern: write old shape to `isolated_paths['...']`, call `load_*()`, re-read from disk, assert new shape.
+
+Migrations run once per upgrade per Pi, persist to disk, and every subsequent load is a clean read. There is no down-migration path — the upgrade gate rolls back the binary, not the data.
+
 ## Latent bugs: pin, don't silently fix
 
 If you find a pre-existing bug while working on something else, don't fix it silently. Pin the current behavior in a test with a comment pointing at the real fix (example: `tests/test_sessions_api.py` documents the `# Total Samples:` footer parser bug in `list_sessions()`). This keeps the scope of the current change honest and surfaces the bug as its own decision later.

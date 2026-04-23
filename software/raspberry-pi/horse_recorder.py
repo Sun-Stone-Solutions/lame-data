@@ -207,13 +207,46 @@ listener_thread = threading.Thread(target=udp_listener, daemon=True)
 listener_thread.start()
 
 
+# Runtime-state schema versions. Bump the constant AND add a matching
+# migration block in _migrate_* whenever you change the shape of the
+# corresponding JSON file. See CLAUDE.md for the convention.
+PROTOCOLS_SCHEMA_VERSION = 1
+DEVICE_CONFIG_SCHEMA_VERSION = 1
+
+
+def _migrate_device_config(data):
+    """Bring device config forward to DEVICE_CONFIG_SCHEMA_VERSION.
+
+    Returns (data, changed). `changed=True` means callers should persist.
+    Each future migration is an `if version < N:` block that mutates data
+    in-place and bumps `version`. Keep them idempotent.
+    """
+    version = data.get('schema_version', 0)
+    original_version = version
+
+    # v0 -> v1: pre-versioning file. Stamp the field so future migrations
+    # have a floor to compare against.
+    if version < 1:
+        version = 1
+
+    data['schema_version'] = version
+    return data, version != original_version
+
+
 def load_device_config():
-    """Load device configuration from JSON file"""
+    """Load device configuration from JSON file, running schema migrations
+    and persisting any upgrade so future loads are a no-op."""
     if DEVICE_CONFIG_FILE.exists():
         with open(DEVICE_CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    # Return default config if file doesn't exist
+            data = json.load(f)
+        data, migrated = _migrate_device_config(data)
+        if migrated:
+            save_device_config(data)
+        return data
+    # In-memory default for a Pi that hasn't saved a config yet. Stamped
+    # with the current schema so fresh installs never run a migration.
     return {
+        "schema_version": DEVICE_CONFIG_SCHEMA_VERSION,
         "devices": {},
         "positions": [
             {"id": "left_front", "label": "Left Front Leg"},
@@ -234,6 +267,7 @@ def save_device_config(config):
 
 
 DEFAULT_PROTOCOLS = {
+    "schema_version": PROTOCOLS_SCHEMA_VERSION,
     "protocols": [
         {
             "id": "proto-standard-lameness",
@@ -254,13 +288,32 @@ DEFAULT_PROTOCOLS = {
 }
 
 
+def _migrate_protocols(data):
+    """Bring protocols forward to PROTOCOLS_SCHEMA_VERSION. Same shape and
+    contract as _migrate_device_config — see that docstring."""
+    version = data.get('schema_version', 0)
+    original_version = version
+
+    # v0 -> v1: pre-versioning file. No data shape change, just stamping.
+    if version < 1:
+        version = 1
+
+    data['schema_version'] = version
+    return data, version != original_version
+
+
 def load_protocols():
-    """Load protocols from JSON file, seeding defaults on first run."""
+    """Load protocols from JSON file, seeding defaults on first run and
+    running schema migrations on existing files."""
     if not PROTOCOLS_FILE.exists():
         save_protocols(DEFAULT_PROTOCOLS)
         return json.loads(json.dumps(DEFAULT_PROTOCOLS))
     with open(PROTOCOLS_FILE, 'r') as f:
-        return json.load(f)
+        data = json.load(f)
+    data, migrated = _migrate_protocols(data)
+    if migrated:
+        save_protocols(data)
+    return data
 
 
 def save_protocols(data):

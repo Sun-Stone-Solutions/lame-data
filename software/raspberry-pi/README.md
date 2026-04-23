@@ -50,6 +50,8 @@ Runtime state lives in two JSON files next to `horse_recorder.py`. **Both are gi
 
 `upgrade.sh` snapshots both files to `.upgrade-backup` sidecars before `git pull` and restores them afterwards, so upstream changes never clobber your local state. The "Restore Defaults" button on `/protocols` is the escape hatch when you *do* want the seed back.
 
+Both files carry a top-level `"schema_version": N` field. When code is shipped that changes the shape of either file, bump `PROTOCOLS_SCHEMA_VERSION` / `DEVICE_CONFIG_SCHEMA_VERSION` in `horse_recorder.py` and add a migration block to the corresponding `_migrate_*` function. Migrations run on first load after the upgrade and persist the upgraded shape back to disk, so each Pi heals itself without manual intervention.
+
 ## Auto-Start (systemd)
 
 To run automatically on boot:
