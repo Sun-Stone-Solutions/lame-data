@@ -440,6 +440,15 @@ def set_protocol_favorite(protocol_id):
     return jsonify(proto)
 
 
+@app.route('/api/defaults/protocols', methods=['POST'])
+def restore_default_protocols():
+    """Overwrite protocols.json with DEFAULT_PROTOCOLS — the "Restore Defaults"
+    button on /protocols. Destructive on purpose: a user who hit this wants a
+    clean slate, not a merge."""
+    save_protocols(DEFAULT_PROTOCOLS)
+    return jsonify(load_protocols())
+
+
 @app.route('/api/start', methods=['POST'])
 def start_recording():
     if recording_state['is_recording']:

@@ -20,6 +20,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PI_DIR="$SCRIPT_DIR/software/raspberry-pi"
 VENV_DIR="$PI_DIR/venv"
 
+# Files the running app mutates at runtime. These are gitignored, but we
+# belt-and-suspenders backup-restore them around `git pull` so that:
+#   1. The first upgrade that brings in the untrack commit still preserves
+#      the user's current state (the pull deletes the tracked file from
+#      disk; restore brings it back).
+#   2. Any locally-modified tracked file we accidentally re-commit in the
+#      future can't block an upgrade — we wipe local diffs before pull and
+#      restore afterwards.
+# The user's runtime state always wins over upstream — that's the right
+# call for per-Pi config. The "Restore defaults" button on /protocols is
+# the escape hatch when they want seeds back.
+RUNTIME_STATE_FILES=(
+    "$PI_DIR/protocols.json"
+    "$PI_DIR/device_config.json"
+)
+
 # Make any non-zero exit visually unambiguous. The systemd service is NOT
 # touched until the very last step, so any failure before then leaves the
 # Pi running the previous working version.
@@ -50,7 +66,30 @@ fi
 # [1/4] Pull latest code FIRST so the re-exec below picks up any changes to
 # this script itself.
 echo "[1/4] Pulling latest code..."
+
+# Snapshot runtime-state files so they survive the pull no matter what git
+# does (deletes via an untrack commit, modifies via a new seed, etc.).
+for f in "${RUNTIME_STATE_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        cp "$f" "$f.upgrade-backup"
+    fi
+done
+
+# Clear any git diff on runtime-state files so pull isn't blocked. Ignore
+# errors — file may be untracked already, which is the steady state.
+for f in "${RUNTIME_STATE_FILES[@]}"; do
+    rel="${f#$SCRIPT_DIR/}"
+    git -C "$SCRIPT_DIR" checkout HEAD -- "$rel" 2>/dev/null || true
+done
+
 git -C "$SCRIPT_DIR" pull
+
+# Restore runtime state from the pre-pull snapshot.
+for f in "${RUNTIME_STATE_FILES[@]}"; do
+    if [ -f "$f.upgrade-backup" ]; then
+        mv "$f.upgrade-backup" "$f"
+    fi
+done
 echo "  Done"
 
 # Re-exec into the just-pulled version of this script so that changes to

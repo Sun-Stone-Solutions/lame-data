@@ -43,10 +43,12 @@ Edit `.env` to configure:
 | CLOUD_URL | `` (disabled) | Base URL of the cloud ingest endpoint |
 | CLOUD_API_KEY | `` (disabled) | API key passed on cloud uploads |
 
-Runtime state lives in two JSON files next to `horse_recorder.py`:
+Runtime state lives in two JSON files next to `horse_recorder.py`. **Both are gitignored** — they're per-Pi mutable state, not code:
 
-- `device_config.json` — sensor ID to horse-position mapping (edited via the Settings page).
-- `protocols.json` — user-defined recording protocols with favorites (edited via the Protocols page; seeded with a "Standard Lameness Exam" on first run).
+- `device_config.json` — sensor ID to horse-position mapping (edited via the Settings page). Absent on first boot; `load_device_config()` returns sensible defaults in memory, file is written the first time you click Save on the Settings page.
+- `protocols.json` — user-defined recording protocols with favorites (edited via the Protocols page). Seeded with `DEFAULT_PROTOCOLS` (a "Standard Lameness Exam") on first read.
+
+`upgrade.sh` snapshots both files to `.upgrade-backup` sidecars before `git pull` and restores them afterwards, so upstream changes never clobber your local state. The "Restore Defaults" button on `/protocols` is the escape hatch when you *do* want the seed back.
 
 ## Auto-Start (systemd)
 
@@ -88,6 +90,7 @@ sudo systemctl start horse-recorder wifi-manager
 | `/api/protocols/<id>` | PUT | Replace name and/or steps |
 | `/api/protocols/<id>` | DELETE | Remove |
 | `/api/protocols/<id>/favorite` | POST | Body: `{is_favorite: bool}`. Returns 409 with `current_favorites` if setting a third favorite |
+| `/api/defaults/protocols` | POST | Wipe `protocols.json` and rewrite it from `DEFAULT_PROTOCOLS`. Powers the "Restore Defaults" button on `/protocols`; destructive on purpose |
 
 ### Devices
 | Endpoint | Method | Description |

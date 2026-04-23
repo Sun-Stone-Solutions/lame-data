@@ -42,3 +42,9 @@ Thumbs.db
 software/raspberry-pi/.env
 software/cloud/.env.local
 software/cloud/.moose
+
+# Runtime state (written by the app; seeded from DEFAULT_PROTOCOLS /
+# load_device_config defaults when absent; see CLAUDE.md).
+software/raspberry-pi/protocols.json
+software/raspberry-pi/device_config.json
+software/raspberry-pi/*.upgrade-backup

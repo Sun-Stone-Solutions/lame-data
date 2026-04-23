@@ -31,6 +31,7 @@ EXPECTED_ROUTES = {
     '/api/protocols',
     '/api/protocols/<protocol_id>',
     '/api/protocols/<protocol_id>/favorite',
+    '/api/defaults/protocols',
     # Recording lifecycle
     '/api/start',
     '/api/stop',

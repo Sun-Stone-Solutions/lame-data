@@ -104,8 +104,21 @@
             padding: 0.3rem 0.75rem;
             font-size: 0.85rem;
         }
-        .new-protocol-btn {
+        .protocols-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
             margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        .new-protocol-btn {
+            margin: 0;
+        }
+        .reset-btn {
+            margin: 0;
+            font-size: 0.85rem;
+            padding: 0.4rem 0.8rem;
         }
         .no-protocols {
             text-align: center;
@@ -138,7 +151,10 @@
         </header>
 
         <article>
-            <button class="new-protocol-btn" onclick="createProtocol()">+ New Protocol</button>
+            <div class="protocols-header-row">
+                <button class="new-protocol-btn" onclick="createProtocol()">+ New Protocol</button>
+                <button class="secondary outline reset-btn" onclick="restoreDefaults()" title="Replace all protocols with the built-in defaults">Restore Defaults</button>
+            </div>
             <div id="protocolList" aria-busy="true">Loading protocols...</div>
         </article>
 
@@ -146,6 +162,20 @@
             <small>Favorite up to 2 protocols to pin them to the recorder screen.</small>
         </footer>
     </main>
+
+    <dialog id="resetConfirmDialog">
+        <article>
+            <h3>Restore default protocols?</h3>
+            <p>This will <strong>delete every protocol</strong> — including any you've created or renamed — and replace them with the built-in Standard Lameness Exam.</p>
+            <p>There's no undo.</p>
+            <footer>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                    <button class="secondary outline" onclick="document.getElementById('resetConfirmDialog').close()">Cancel</button>
+                    <button class="btn-stop" onclick="confirmRestoreDefaults()">Restore Defaults</button>
+                </div>
+            </footer>
+        </article>
+    </dialog>
 
     <script>
         let protocols = [];
@@ -297,6 +327,22 @@
             proto.name = edits.name || proto.name;
             const byId = Object.fromEntries((proto.steps || []).map(s => [s.id, s]));
             proto.steps = edits.steps.map(s => byId[s.id] ? { ...byId[s.id], instruction: s.instruction } : s);
+        }
+
+        function restoreDefaults() {
+            document.getElementById('resetConfirmDialog').showModal();
+        }
+
+        async function confirmRestoreDefaults() {
+            document.getElementById('resetConfirmDialog').close();
+            const response = await fetch('/api/defaults/protocols', { method: 'POST' });
+            if (!response.ok) {
+                toast('Restore failed');
+                return;
+            }
+            expanded.clear();
+            toast('Defaults restored');
+            await loadProtocols();
         }
 
         async function createProtocol() {

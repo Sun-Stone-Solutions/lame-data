@@ -41,6 +41,14 @@ Any change under `software/raspberry-pi/` must keep `software/raspberry-pi/tests
 
 When adding a feature, add tests that pin the contracts downstream code depends on — the exact JSON shape the frontend reads, the exact CSV header strings a parser looks for. Locking behavior is more useful than just covering code paths.
 
+## Runtime state files are gitignored
+
+Files the running app mutates at runtime (`software/raspberry-pi/protocols.json`, `software/raspberry-pi/device_config.json`) are **not tracked in git** — they're per-Pi state, not code. Seed/default logic lives in Python (`DEFAULT_PROTOCOLS`, `load_device_config()`'s return value) and runs whenever the file is absent.
+
+`upgrade.sh` backs these files up to `.upgrade-backup` sidecars before `git pull` and restores them after, so upstream changes never clobber local state. When a user wants the seed back explicitly, the "Restore Defaults" button on `/protocols` (`POST /api/defaults/protocols`) rewrites `protocols.json` to `DEFAULT_PROTOCOLS`.
+
+If you add a new file that falls into this category (app writes to it at runtime, but we also want sensible first-boot content), follow the same pattern: seed in code, gitignore the runtime path, add to `RUNTIME_STATE_FILES` in `upgrade.sh`. Don't check the runtime file in — the moment it diverges between upstream and a deployed Pi, `git pull` breaks.
+
 ## Latent bugs: pin, don't silently fix
 
 If you find a pre-existing bug while working on something else, don't fix it silently. Pin the current behavior in a test with a comment pointing at the real fix (example: `tests/test_sessions_api.py` documents the `# Total Samples:` footer parser bug in `list_sessions()`). This keeps the scope of the current change honest and surfaces the bug as its own decision later.

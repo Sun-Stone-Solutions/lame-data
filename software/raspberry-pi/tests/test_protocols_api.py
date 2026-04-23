@@ -149,3 +149,37 @@ def test_favorite_setting_same_value_is_idempotent(client, isolated_paths):
 def test_favorite_unknown_id_returns_404(client, isolated_paths):
     resp = client.post('/api/protocols/missing/favorite', json={'is_favorite': True})
     assert resp.status_code == 404
+
+
+def test_restore_defaults_overwrites_existing(client, isolated_paths):
+    """Reset endpoint wipes user state and writes DEFAULT_PROTOCOLS verbatim —
+    used by the 'Restore Defaults' button when the user wants a clean slate."""
+    # Put the state in a non-default shape: create a custom, delete the seed.
+    seeded = client.get('/api/protocols').get_json()['protocols']
+    seed_id = seeded[0]['id']
+    client.post('/api/protocols', json={'name': 'Custom', 'steps': []})
+    client.delete(f'/api/protocols/{seed_id}')
+
+    before = client.get('/api/protocols').get_json()['protocols']
+    assert [p['name'] for p in before] == ['Custom']
+
+    resp = client.post('/api/defaults/protocols')
+    assert resp.status_code == 200
+
+    after = client.get('/api/protocols').get_json()['protocols']
+    assert [p['name'] for p in after] == ['Standard Lameness Exam']
+    # Seeded protocol preserves its well-known id so clients can reason about it.
+    assert after[0]['id'] == 'proto-standard-lameness'
+    assert after[0]['is_favorite'] is True
+    assert len(after[0]['steps']) == 8
+
+
+def test_restore_defaults_on_empty_state(client, isolated_paths):
+    """Works from any state, including an already-empty protocols file."""
+    seeded = client.get('/api/protocols').get_json()['protocols']
+    client.delete(f'/api/protocols/{seeded[0]["id"]}')
+    assert client.get('/api/protocols').get_json()['protocols'] == []
+
+    client.post('/api/defaults/protocols')
+    after = client.get('/api/protocols').get_json()['protocols']
+    assert [p['name'] for p in after] == ['Standard Lameness Exam']
