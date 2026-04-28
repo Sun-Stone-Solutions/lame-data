@@ -66,9 +66,20 @@ flash_state = {
     'targets': {},       # device_id -> {state, progress, error, version_at_start}
     'started_at': None,
     'finished_at': None,
+    'build_started_at': None,           # set when stage transitions to 'building'
+    'expected_build_seconds': None,     # the previous build's duration; the UI
+                                        # uses (elapsed / expected) as a rough
+                                        # progress estimate during the build
+                                        # phase. Self-corrects as builds happen.
 }
 
 _flash_lock = threading.Lock()
+
+# In-memory record of how long the last successful arduino-cli compile took.
+# Survives across flash runs but resets on service restart — that's fine; the
+# first post-restart build just shows an elapsed timer and the next one gets
+# the estimate.
+_last_build_duration_seconds = None
 
 
 def reset_flash_state():
@@ -78,6 +89,8 @@ def reset_flash_state():
         flash_state['targets'] = {}
         flash_state['started_at'] = None
         flash_state['finished_at'] = None
+        flash_state['build_started_at'] = None
+        flash_state['expected_build_seconds'] = None
 
 
 def _set_target(device_id, **fields):
@@ -183,7 +196,12 @@ def build_bin():
 
     Raises RuntimeError on any failure with a message suitable for surfacing
     to the UI.
+
+    On success, updates `_last_build_duration_seconds` so the next build's
+    progress UI can show a meaningful estimate.
     """
+    global _last_build_duration_seconds
+
     if not toolchain_installed():
         raise RuntimeError(
             'arduino-cli + m5stack:esp32 core not installed. '
@@ -205,6 +223,7 @@ def build_bin():
         '--output-dir', str(BUILD_DIR),
         str(FIRMWARE_SRC_DIR),
     ]
+    started = datetime.datetime.now()
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=300,
@@ -215,6 +234,10 @@ def build_bin():
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or '')[-800:]
         raise RuntimeError(f'arduino-cli compile failed:\n{tail}')
+
+    # Record duration only on success — failed builds shouldn't poison the
+    # estimate for the next attempt.
+    _last_build_duration_seconds = (datetime.datetime.now() - started).total_seconds()
 
     # arduino-cli writes several .bin artifacts:
     #   <sketch>.ino.bin              ← the application (this is what we want)
@@ -338,6 +361,8 @@ def flash_fleet(targets, password, device_ip_lookup, current_versions=None):
         flash_state['stage'] = 'building'
         flash_state['started_at'] = datetime.datetime.now().isoformat()
         flash_state['finished_at'] = None
+        flash_state['build_started_at'] = datetime.datetime.now().isoformat()
+        flash_state['expected_build_seconds'] = _last_build_duration_seconds
         flash_state['targets'] = {
             device_id: {
                 'state': 'pending',

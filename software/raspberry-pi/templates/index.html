@@ -578,7 +578,21 @@
             // ~30s build phase when no per-device progress is moving.
             let banner = '';
             if (state.stage === 'building') {
-                banner = '<p style="margin:0 0 0.75rem 0;"><em>Building firmware… (~30s on first build)</em></p>';
+                const startMs = state.build_started_at ? new Date(state.build_started_at).getTime() : Date.now();
+                const elapsedSec = Math.max(0, (Date.now() - startMs) / 1000);
+                const expected = state.expected_build_seconds;
+                let label, pct;
+                if (expected && expected > 0) {
+                    pct = Math.min(95, (elapsedSec / expected) * 100);
+                    label = `Building firmware… ${Math.floor(elapsedSec)}s of ~${Math.floor(expected)}s`;
+                } else {
+                    pct = 0;  // unknown total — bar stays empty, label gives the elapsed timer
+                    label = `Building firmware… ${Math.floor(elapsedSec)}s elapsed (first build, no estimate yet)`;
+                }
+                banner = `
+                    <p style="margin:0 0 0.5rem 0;"><em>${label}</em></p>
+                    <progress value="${pct}" max="100" style="width:100%; height:8px; margin:0 0 0.75rem 0;"></progress>
+                `;
             } else if (state.stage === 'flashing') {
                 const done = ids.filter(i => ['done','failed'].includes(targets[i].state)).length;
                 const inProgress = ids.find(i => targets[i].state === 'running');
