@@ -24,7 +24,7 @@ else
 fi
 
 # Configure .env
-echo "[1/6] Configuring environment..."
+echo "[1/8] Configuring environment..."
 if [ -f "$PI_DIR/.env" ]; then
     echo "  .env already exists."
     read -p "  Reconfigure? [y/N] " -n 1 -r
@@ -72,6 +72,10 @@ if [ "$SKIP_ENV_CONFIG" = false ]; then
         CLOUD_API_KEY=${CLOUD_API_KEY:-}
     fi
 
+    # Generate a random OTA_PASSWORD for wireless firmware updates. Stable
+    # across reconfigures so already-flashed sticks keep working.
+    OTA_PASSWORD=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+
     # Write .env file
     cat > "$PI_DIR/.env" << EOF
 # WiFi Configuration
@@ -90,15 +94,29 @@ WEB_PORT=5000
 # Cloud Analytics (optional)
 CLOUD_URL=$CLOUD_URL
 CLOUD_API_KEY=$CLOUD_API_KEY
+
+# Over-the-air firmware update password (shared with each M5StickC's
+# config.h). Bake this value into the stick's config.h before flashing.
+OTA_PASSWORD=$OTA_PASSWORD
 EOF
 
     echo ""
     echo "  Configuration saved to .env"
+    echo "  OTA_PASSWORD generated: $OTA_PASSWORD"
+    echo "  → Copy this into each stick's config.h before the final USB flash."
+fi
+
+# Preserve OTA_PASSWORD across reconfigures — if someone re-ran and chose to
+# keep the old .env, make sure it has an OTA_PASSWORD line.
+if [ -f "$PI_DIR/.env" ] && ! grep -q "^OTA_PASSWORD=" "$PI_DIR/.env"; then
+    OTA_PASSWORD=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
+    echo "OTA_PASSWORD=$OTA_PASSWORD" >> "$PI_DIR/.env"
+    echo "  Added OTA_PASSWORD=$OTA_PASSWORD to existing .env"
 fi
 
 # Create virtual environment
 echo ""
-echo "[2/6] Creating Python virtual environment..."
+echo "[2/8] Creating Python virtual environment..."
 if [ ! -d "$VENV_DIR" ]; then
     python3 -m venv "$VENV_DIR"
     echo "  Created venv at $VENV_DIR"
@@ -108,21 +126,21 @@ fi
 
 # Install Python dependencies
 echo ""
-echo "[3/6] Installing Python dependencies..."
+echo "[3/8] Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install -q --upgrade pip
 "$VENV_DIR/bin/pip" install -q -r "$PI_DIR/requirements.txt"
 echo "  Done"
 
 # Make scripts executable
 echo ""
-echo "[4/6] Setting permissions..."
+echo "[4/8] Setting permissions..."
 chmod +x "$PI_DIR/wifi_manager.sh"
 chmod +x "$SCRIPT_DIR/upgrade.sh" 2>/dev/null || true
 echo "  Done"
 
 # Disable WiFi MAC randomization (needed for DHCP reservations)
 echo ""
-echo "[5/6] Configuring stable WiFi MAC address..."
+echo "[5/8] Configuring stable WiFi MAC address..."
 if [ "$SKIP_SYSTEMD" = true ]; then
     echo "  Skipped (run with sudo)"
 else
@@ -144,7 +162,7 @@ fi
 
 # Configure passwordless shutdown for web UI
 echo ""
-echo "[6/7] Configuring shutdown permissions..."
+echo "[6/8] Configuring shutdown permissions..."
 if [ "$SKIP_SYSTEMD" = true ]; then
     echo "  Skipped (run with sudo)"
 else
@@ -155,9 +173,59 @@ else
     echo "  Granted $REPO_OWNER_EARLY passwordless shutdown access"
 fi
 
+# Install arduino-cli + M5Stack ESP32 core so the Pi can build and push
+# firmware updates to the sticks wirelessly (no USB cable needed after the
+# initial one-time flash).
+echo ""
+echo "[7/8] Installing arduino-cli + M5Stack ESP32 core..."
+if [ "$SKIP_SYSTEMD" = true ]; then
+    echo "  Skipped (run with sudo to install arduino-cli to /usr/local/bin)"
+else
+    REPO_OWNER_FW=$(stat -c '%U' "$SCRIPT_DIR")
+    if ! command -v arduino-cli >/dev/null 2>&1; then
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            aarch64|arm64) ARDUINO_PKG="Linux_ARM64" ;;
+            armv7l|armv6l) ARDUINO_PKG="Linux_ARMv7" ;;
+            x86_64)        ARDUINO_PKG="Linux_64bit" ;;
+            *)             ARDUINO_PKG="Linux_ARM64" ;;
+        esac
+        ARDUINO_CLI_URL="https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${ARDUINO_PKG}.tar.gz"
+        TMP_DIR=$(mktemp -d)
+        if curl -fsSL "$ARDUINO_CLI_URL" -o "$TMP_DIR/arduino-cli.tar.gz"; then
+            tar -xzf "$TMP_DIR/arduino-cli.tar.gz" -C "$TMP_DIR"
+            mv "$TMP_DIR/arduino-cli" /usr/local/bin/arduino-cli
+            chmod +x /usr/local/bin/arduino-cli
+            echo "  arduino-cli installed to /usr/local/bin"
+        else
+            echo "  WARNING: failed to download arduino-cli (offline?). Fleet firmware"
+            echo "           flash will be disabled in the web UI until this runs cleanly."
+        fi
+        rm -rf "$TMP_DIR"
+    else
+        echo "  arduino-cli already installed"
+    fi
+
+    if command -v arduino-cli >/dev/null 2>&1; then
+        # Core install runs as the repo owner so ~/.arduino15 lives in their
+        # home dir (not root's) and the horse-recorder service can read it.
+        sudo -u "$REPO_OWNER_FW" arduino-cli config init --overwrite --quiet 2>/dev/null || true
+        sudo -u "$REPO_OWNER_FW" arduino-cli config add board_manager.additional_urls \
+            https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/arduino/package_m5stack_index.json
+        sudo -u "$REPO_OWNER_FW" arduino-cli core update-index
+        if ! sudo -u "$REPO_OWNER_FW" arduino-cli core list | grep -q "m5stack:esp32"; then
+            echo "  Installing m5stack:esp32 core (this takes a few minutes)..."
+            sudo -u "$REPO_OWNER_FW" arduino-cli core install m5stack:esp32
+            echo "  M5Stack ESP32 core installed"
+        else
+            echo "  M5Stack ESP32 core already installed"
+        fi
+    fi
+fi
+
 # Install systemd services
 echo ""
-echo "[7/7] Installing systemd services..."
+echo "[8/8] Installing systemd services..."
 if [ "$SKIP_SYSTEMD" = true ]; then
     echo "  Skipped (run with sudo to install services)"
 else

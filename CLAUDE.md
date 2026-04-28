@@ -60,6 +60,20 @@ Because the files live per-Pi, code can't push a new format through `git pull`. 
 
 Migrations run once per upgrade per Pi, persist to disk, and every subsequent load is a clean read. There is no down-migration path — the upgrade gate rolls back the binary, not the data.
 
+### Firmware version + fleet OTA
+
+The Pi builds and wirelessly pushes updates to the M5StickC fleet via `firmware_manager.py` + the ESP32 OTA protocol (`espota.py`). The source of truth for the available firmware version is the string literal `FIRMWARE_VERSION = "1.0.0"` in `hardware/m5stickc/horse_sensor/horse_sensor.ino`. Bump this constant whenever a firmware-affecting change ships. `firmware_manager.available_version()` reads it back via regex; the UI compares against each stick's self-reported version (BAT message field 7) to decide when to show the update banner.
+
+Safety rules baked into `/api/firmware/flash`:
+
+- 409 if a recording is active (the user is mid-lameness-exam; flashing would brick the session).
+- 409 if a flash is already in progress.
+- 409 if `arduino-cli` + `m5stack:esp32` core aren't installed on the Pi.
+- 409 if `OTA_PASSWORD` isn't set in the Pi's `.env`.
+- 409 if any selected target isn't currently reporting `charging: true` — a mid-flash battery death bricks the stick.
+
+When you extend the firmware (new BAT fields, new screens, new behavior), bump `FIRMWARE_VERSION`, update the Pi-side parser to accept the new fields **backwards-compatibly** (default when missing), and let rolling upgrades happen: Pi first (parser tolerates old sticks), then the sticks over the air.
+
 ## Latent bugs: pin, don't silently fix
 
 If you find a pre-existing bug while working on something else, don't fix it silently. Pin the current behavior in a test with a comment pointing at the real fix (example: `tests/test_sessions_api.py` documents the `# Total Samples:` footer parser bug in `list_sessions()`). This keeps the scope of the current change honest and surfaces the bug as its own decision later.

@@ -127,6 +127,38 @@
             color: var(--pico-muted-color);
             font-size: 0.9rem;
         }
+
+        /* Firmware update banner */
+        .firmware-banner {
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--pico-border-radius);
+            background: color-mix(in srgb, var(--ctp-yellow, gold) 18%, var(--pico-card-background-color));
+            border-left: 4px solid var(--ctp-yellow, gold);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .firmware-banner-text {
+            flex: 1;
+            min-width: 200px;
+        }
+        .firmware-banner-title {
+            font-weight: bold;
+            margin-bottom: 0.15rem;
+        }
+        .firmware-banner-detail {
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+        }
+        .firmware-banner button {
+            margin: 0;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
         .run-header {
             display: flex;
             justify-content: space-between;
@@ -187,6 +219,14 @@
                 <a href="/settings">Settings</a>
             </div>
         </header>
+
+        <div id="firmwareBanner" class="firmware-banner" style="display:none;">
+            <div class="firmware-banner-text">
+                <div class="firmware-banner-title">⚡ Firmware update available</div>
+                <div class="firmware-banner-detail" id="firmwareBannerDetail"></div>
+            </div>
+            <button id="firmwareBannerBtn" onclick="openFlashModal()">Update Plugged-In Sensors</button>
+        </div>
 
         <article>
             <div class="horse-diagram" id="horseDiagram">
@@ -291,6 +331,16 @@
 
     </main>
 
+    <dialog id="flashModal">
+        <article>
+            <h3 id="flashModalTitle">Updating firmware…</h3>
+            <div id="flashModalTargets"></div>
+            <footer>
+                <button id="flashModalClose" class="secondary" onclick="closeFlashModal()" disabled>Close</button>
+            </footer>
+        </article>
+    </dialog>
+
     <dialog id="protocolStartDialog">
         <article>
             <h3 id="protocolStartTitle">Start Protocol</h3>
@@ -345,15 +395,19 @@
                 const status = deviceStatus[deviceId];
                 let colorClass, detailText;
 
+                // ⚡ prefix when the stick is plugged in and charging — gives a
+                // glance-check that every sensor on the hub is taking power.
+                const bolt = status && status.charging ? '⚡ ' : '';
+
                 if (!status || !status.connected) {
                     colorClass = 'pos-red';
                     detailText = deviceId + ' (offline)';
                 } else if (status.percent < 50) {
                     colorClass = 'pos-yellow';
-                    detailText = deviceId + ' ' + status.percent.toFixed(0) + '%';
+                    detailText = bolt + deviceId + ' ' + status.percent.toFixed(0) + '%';
                 } else {
                     colorClass = 'pos-green';
-                    detailText = deviceId + ' ' + status.percent.toFixed(0) + '%';
+                    detailText = bolt + deviceId + ' ' + status.percent.toFixed(0) + '%';
                 }
 
                 el.className = el.className.replace(/pos-(none|red|yellow|green)/, colorClass);
@@ -391,6 +445,7 @@
                     document.getElementById('notes').disabled = isRecording;
 
                     updateHorseDiagram(data.device_status || {});
+                    updateFirmwareBanner(data.device_status || {});
                     renderRunner();
                 });
         }
@@ -434,6 +489,118 @@
                 .then(data => {
                     if (data.success) document.getElementById('syncCount').textContent = '0';
                 });
+        }
+
+        // ---- Firmware / OTA fleet flash ----
+        let availableFirmwareVersion = null;
+        let flashPollTimer = null;
+
+        async function loadFirmwareStatus() {
+            try {
+                const r = await fetch('/api/firmware');
+                const data = await r.json();
+                availableFirmwareVersion = data.available_version;
+            } catch (e) {
+                availableFirmwareVersion = null;
+            }
+        }
+
+        function updateFirmwareBanner(deviceStatus) {
+            const banner = document.getElementById('firmwareBanner');
+            const detail = document.getElementById('firmwareBannerDetail');
+            const btn = document.getElementById('firmwareBannerBtn');
+            if (!availableFirmwareVersion) { banner.style.display = 'none'; return; }
+
+            const connected = Object.values(deviceStatus || {}).filter(s => s.connected);
+            // Treat 'unknown' as "pre-OTA firmware, not a flash candidate" — only
+            // fire the banner when at least one stick has reported a real version
+            // that differs from what we could ship.
+            const outdated = connected.filter(s =>
+                s.firmware_version && s.firmware_version !== 'unknown'
+                && s.firmware_version !== availableFirmwareVersion
+            );
+            const pluggedOutdated = outdated.filter(s => s.charging);
+
+            if (outdated.length === 0) { banner.style.display = 'none'; return; }
+
+            banner.style.display = 'flex';
+            detail.textContent =
+                `${outdated.length} of ${connected.length} sensors out of date. ` +
+                `Current firmware: v${availableFirmwareVersion}.`;
+            btn.disabled = pluggedOutdated.length === 0;
+            btn.title = pluggedOutdated.length === 0
+                ? 'Plug out-of-date sensors into the charging hub to enable.'
+                : '';
+        }
+
+        async function openFlashModal() {
+            // Kick off the flash AND open the modal in parallel; the first
+            // status poll will populate per-device rows.
+            const resp = await fetch('/api/firmware/flash', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({all_plugged_in: true})
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({error: 'flash failed'}));
+                alert(err.error || 'flash failed');
+                return;
+            }
+            document.getElementById('flashModalClose').disabled = true;
+            document.getElementById('flashModal').showModal();
+            pollFlashStatus();
+        }
+
+        async function pollFlashStatus() {
+            try {
+                const r = await fetch('/api/firmware/flash_status');
+                const state = await r.json();
+                renderFlashTargets(state);
+                if (state.active) {
+                    flashPollTimer = setTimeout(pollFlashStatus, 500);
+                } else {
+                    document.getElementById('flashModalClose').disabled = false;
+                    // Refresh the banner once the flash settles so it
+                    // disappears if everything is now current.
+                    setTimeout(loadFirmwareStatus, 1000);
+                }
+            } catch (e) {
+                flashPollTimer = setTimeout(pollFlashStatus, 1000);
+            }
+        }
+
+        function renderFlashTargets(state) {
+            const container = document.getElementById('flashModalTargets');
+            const targets = state.targets || {};
+            const ids = Object.keys(targets);
+            if (ids.length === 0) {
+                container.innerHTML = '<p>Preparing flash…</p>';
+                return;
+            }
+            container.innerHTML = ids.map(id => {
+                const t = targets[id];
+                const pct = t.progress || 0;
+                let statusText;
+                if (t.state === 'pending') statusText = 'Pending';
+                else if (t.state === 'running') statusText = `Running — ${pct}%`;
+                else if (t.state === 'done') statusText = 'Done ✓';
+                else if (t.state === 'failed') statusText = `Failed: ${t.error || 'unknown'}`;
+                else statusText = t.state;
+                return `
+                    <div style="margin: 0.75rem 0;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.9rem;">
+                            <strong>${id}</strong>
+                            <span>${statusText}</span>
+                        </div>
+                        <progress value="${pct}" max="100" style="width:100%; height:8px; margin:0.25rem 0 0 0;"></progress>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function closeFlashModal() {
+            if (flashPollTimer) { clearTimeout(flashPollTimer); flashPollTimer = null; }
+            document.getElementById('flashModal').close();
         }
 
         // ---- Horses ----
@@ -680,6 +847,7 @@
         loadDeviceConfig()
             .then(loadProtocols)
             .then(loadRecentHorses)
+            .then(loadFirmwareStatus)
             .then(() => {
                 updateStatus();
                 setInterval(updateStatus, 1000);

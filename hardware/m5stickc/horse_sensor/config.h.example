@@ -24,4 +24,10 @@ const char* deviceName = "Sensor";
 // UDP Configuration
 const int udpPort = 8888;
 
+// Over-the-air firmware update password. Must match the OTA_PASSWORD in the
+// Pi's .env file — install.sh on the Pi generates a random value on first
+// install; copy that value into this config.h before flashing each stick.
+// After the first USB flash, all subsequent updates go wirelessly from the Pi.
+const char* otaPassword = "changeme";
+
 #endif

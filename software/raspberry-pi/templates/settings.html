@@ -45,6 +45,20 @@
             font-size: 0.9rem;
             color: var(--pico-muted-color);
         }
+        .firmware-info {
+            font-size: 0.8rem;
+            color: var(--pico-muted-color);
+            margin-top: 0.25rem;
+        }
+        .firmware-info.outdated { color: var(--ctp-yellow, goldenrod); }
+        .firmware-info.unknown { color: var(--pico-muted-color); opacity: 0.6; }
+        .firmware-info.current { color: var(--ctp-green, green); }
+        .flash-single-btn {
+            margin-top: 0.5rem;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.8rem;
+            width: 100%;
+        }
         .overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -106,7 +120,13 @@
             <h2>Device Configuration</h2>
             <p>Assign each sensor to a position on the horse. Sensors appear here automatically when they connect.</p>
             <div id="deviceGrid" class="device-grid"></div>
-            <button onclick="saveDeviceConfig()">Save Configuration</button>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:1rem;">
+                <button onclick="saveDeviceConfig()">Save Configuration</button>
+                <button id="flashAllBtn" class="outline" onclick="flashAllPluggedIn()" disabled
+                        title="Plug out-of-date sensors into the charging hub to enable">
+                    Flash All Plugged-In
+                </button>
+            </div>
         </article>
 
         <article>
@@ -117,6 +137,16 @@
                 <button class="btn-stop" onclick="confirmShutdown()">Shutdown Pi</button>
             </div>
         </article>
+
+        <dialog id="flashModal">
+            <article>
+                <h3 id="flashModalTitle">Updating firmware…</h3>
+                <div id="flashModalTargets"></div>
+                <footer>
+                    <button id="flashModalClose" class="secondary" onclick="closeFlashModal()" disabled>Close</button>
+                </footer>
+            </article>
+        </dialog>
 
         <dialog id="systemDialog">
             <article>
@@ -168,13 +198,19 @@
                             <span class="device-title">ID: ${deviceId}</span>
                             <span class="battery-info" id="battery-${deviceId}">--</span>
                         </div>
-                        <label for="position-${deviceId}">Position</label>
+                        <div class="firmware-info" id="firmware-${deviceId}">Firmware: --</div>
+                        <label for="position-${deviceId}" style="margin-top:0.5rem;">Position</label>
                         <select id="position-${deviceId}" data-device="${deviceId}">
                             <option value="">Not in use</option>
                             ${availablePositions.map(pos =>
                                 `<option value="${pos.id}" ${device.position === pos.id ? 'selected' : ''}>${pos.label}</option>`
                             ).join('')}
                         </select>
+                        <button id="flash-${deviceId}" class="flash-single-btn outline"
+                                onclick="flashDevice('${deviceId}')" disabled
+                                title="Plug this sensor into power and wait for it to report charging">
+                            Flash Firmware
+                        </button>
                         <button class="outline secondary" style="margin-top:0.5rem;padding:0.2rem 0.6rem;font-size:0.75rem;" onclick="removeDevice('${deviceId}')">Remove Sensor</button>
                     </div>
                 `;
@@ -231,6 +267,127 @@
             }
         }
 
+        // ---- Firmware / OTA ----
+        let availableFirmwareVersion = null;
+        let flashPollTimer = null;
+
+        async function loadFirmwareStatus() {
+            try {
+                const r = await fetch('/api/firmware');
+                const data = await r.json();
+                availableFirmwareVersion = data.available_version;
+            } catch (e) {
+                availableFirmwareVersion = null;
+            }
+            updateFlashAllBtn();
+        }
+
+        function updateFirmwareRow(deviceId, status) {
+            const row = document.getElementById(`firmware-${deviceId}`);
+            const btn = document.getElementById(`flash-${deviceId}`);
+            if (!row) return;
+
+            const ver = status.firmware_version || 'unknown';
+            row.textContent = `Firmware: ${ver === 'unknown' ? 'unknown (pre-OTA)' : 'v' + ver}`;
+            row.classList.remove('outdated', 'unknown', 'current');
+
+            if (!availableFirmwareVersion) { return; }
+            if (ver === 'unknown') row.classList.add('unknown');
+            else if (ver === availableFirmwareVersion) row.classList.add('current');
+            else row.classList.add('outdated');
+
+            if (btn) {
+                const outdated = ver !== 'unknown' && ver !== availableFirmwareVersion;
+                const plugged = !!status.charging;
+                btn.disabled = !(outdated && plugged && status.connected);
+            }
+        }
+
+        function updateFlashAllBtn() {
+            const btn = document.getElementById('flashAllBtn');
+            if (!btn) return;
+            const outdatedPlugged = Array.from(allDeviceIds).some(id => {
+                const row = document.getElementById(`firmware-${id}`);
+                return row && row.classList.contains('outdated')
+                    && document.getElementById(`battery-${id}`)?.textContent.startsWith('⚡');
+            });
+            btn.disabled = !outdatedPlugged;
+        }
+
+        async function flashDevice(deviceId) {
+            await startFlash({ device_ids: [deviceId] });
+        }
+
+        async function flashAllPluggedIn() {
+            await startFlash({ all_plugged_in: true });
+        }
+
+        async function startFlash(body) {
+            const resp = await fetch('/api/firmware/flash', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({error: 'flash failed'}));
+                alert(err.error || 'flash failed');
+                return;
+            }
+            document.getElementById('flashModalClose').disabled = true;
+            document.getElementById('flashModal').showModal();
+            pollFlashStatus();
+        }
+
+        async function pollFlashStatus() {
+            try {
+                const r = await fetch('/api/firmware/flash_status');
+                const state = await r.json();
+                renderFlashTargets(state);
+                if (state.active) {
+                    flashPollTimer = setTimeout(pollFlashStatus, 500);
+                } else {
+                    document.getElementById('flashModalClose').disabled = false;
+                    setTimeout(loadFirmwareStatus, 1000);
+                }
+            } catch (e) {
+                flashPollTimer = setTimeout(pollFlashStatus, 1000);
+            }
+        }
+
+        function renderFlashTargets(state) {
+            const container = document.getElementById('flashModalTargets');
+            const targets = state.targets || {};
+            const ids = Object.keys(targets);
+            if (ids.length === 0) {
+                container.innerHTML = '<p>Preparing flash…</p>';
+                return;
+            }
+            container.innerHTML = ids.map(id => {
+                const t = targets[id];
+                const pct = t.progress || 0;
+                let statusText;
+                if (t.state === 'pending') statusText = 'Pending';
+                else if (t.state === 'running') statusText = `Running — ${pct}%`;
+                else if (t.state === 'done') statusText = 'Done ✓';
+                else if (t.state === 'failed') statusText = `Failed: ${t.error || 'unknown'}`;
+                else statusText = t.state;
+                return `
+                    <div style="margin: 0.75rem 0;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.9rem;">
+                            <strong>${id}</strong>
+                            <span>${statusText}</span>
+                        </div>
+                        <progress value="${pct}" max="100" style="width:100%; height:8px; margin:0.25rem 0 0 0;"></progress>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function closeFlashModal() {
+            if (flashPollTimer) { clearTimeout(flashPollTimer); flashPollTimer = null; }
+            document.getElementById('flashModal').close();
+        }
+
         function updateDeviceStatus() {
             fetch('/api/status')
                 .then(r => r.json())
@@ -251,9 +408,11 @@
                             const status = data.device_status[deviceId];
                             card.classList.toggle('connected', status.connected);
                             card.classList.toggle('disconnected', !status.connected);
+                            const bolt = status.charging ? '⚡ ' : '';
                             batterySpan.textContent = status.connected
-                                ? `${status.percent.toFixed(0)}%`
+                                ? `${bolt}${status.percent.toFixed(0)}%`
                                 : 'Offline';
+                            updateFirmwareRow(deviceId, status);
                         } else {
                             card.classList.remove('connected');
                             card.classList.add('disconnected');
@@ -347,10 +506,12 @@
             location.reload();
         }
 
-        loadDeviceConfig().then(() => {
-            updateDeviceStatus();
-            setInterval(updateDeviceStatus, 2000);
-        });
+        loadDeviceConfig()
+            .then(loadFirmwareStatus)
+            .then(() => {
+                updateDeviceStatus();
+                setInterval(() => { updateDeviceStatus(); updateFlashAllBtn(); }, 2000);
+            });
     </script>
 </body>
 </html>

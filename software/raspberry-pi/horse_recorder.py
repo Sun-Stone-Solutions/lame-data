@@ -16,6 +16,7 @@ from pathlib import Path
 from collections import deque
 from dotenv import load_dotenv
 from gait_segmentation import segment_gait
+import firmware_manager
 
 try:
     import requests as http_requests
@@ -177,11 +178,21 @@ def udp_listener():
                 voltage = float(parts[2])
                 percent = float(parts[3])
                 fifo_overflows = int(parts[4]) if len(parts) >= 5 else 0
+                # Field 6 (charging flag) is optional — older firmware omits it.
+                # Treat absence as "not charging" so mixed-version fleets work.
+                charging = bool(int(parts[5])) if len(parts) >= 6 else False
+                # Field 7 (firmware version) is optional. Pre-OTA sticks don't
+                # send one; we mark them 'unknown' so the UI can distinguish
+                # "out-of-date" from "never-reported" and suppress the update
+                # banner until at least one stick has reported a real version.
+                firmware_version = parts[6].strip() if len(parts) >= 7 else 'unknown'
                 _device_addrs[device_id] = sender_ip
                 recording_state['device_status'][device_id] = {
                     'voltage': voltage,
                     'percent': percent,
                     'fifo_overflows': fifo_overflows,
+                    'charging': charging,
+                    'firmware_version': firmware_version,
                     'last_seen': datetime.datetime.now().isoformat()
                 }
             elif recording_state['is_recording'] and recording_state['recorder']:
@@ -1013,6 +1024,150 @@ def upload_status(filename):
     """Get upload progress for a session."""
     state = upload_states.get(filename, {'status': 'none', 'progress': 0, 'error': None})
     return jsonify(state)
+
+
+@app.route('/api/firmware')
+def firmware_status():
+    """Summary of what firmware the Pi can build and ship."""
+    return jsonify({
+        'available_version': firmware_manager.available_version(),
+        'toolchain_installed': firmware_manager.toolchain_installed(),
+        'build_bin_exists': firmware_manager.FIRMWARE_BIN.exists(),
+        'ota_enabled': bool(os.getenv('OTA_PASSWORD')),
+    })
+
+
+def _resolve_flash_targets(body):
+    """Return a list of (device_id, current_version) the caller wants to flash.
+    Enforces: each target is currently charging AND its reported version
+    differs from the source version. Returns (targets, error_response_or_None)."""
+    device_status = recording_state.get('device_status', {})
+    available = firmware_manager.available_version()
+
+    # Stamp connection state — `connected` is derived in /api/status, but the
+    # flash endpoint needs to reason about it too, so mirror the logic.
+    now = datetime.datetime.now()
+    plugged = {}
+    for dev_id, info in device_status.items():
+        last_seen = datetime.datetime.fromisoformat(info['last_seen'])
+        if (now - last_seen).total_seconds() >= 60:
+            continue
+        if info.get('charging'):
+            plugged[dev_id] = info
+
+    if body.get('all_plugged_in'):
+        candidate_ids = list(plugged.keys())
+    else:
+        candidate_ids = list(body.get('device_ids') or [])
+
+    if not candidate_ids:
+        return None, (jsonify({
+            'error': 'no devices selected — plug sticks into the charging hub first',
+            'plugged_in_ids': list(plugged.keys()),
+        }), 409)
+
+    targets = []
+    not_charging = []
+    already_current = []
+    for dev_id in candidate_ids:
+        info = device_status.get(dev_id)
+        if not info or dev_id not in plugged:
+            not_charging.append(dev_id)
+            continue
+        current = info.get('firmware_version', 'unknown')
+        if current == available:
+            already_current.append(dev_id)
+            continue
+        targets.append((dev_id, current))
+
+    if not_charging:
+        return None, (jsonify({
+            'error': 'one or more target devices are not plugged in',
+            'not_charging': not_charging,
+        }), 409)
+
+    return targets, None
+
+
+@app.route('/api/firmware/flash', methods=['POST'])
+def firmware_flash():
+    """Flash the plugged-in fleet (or a specific subset). Kicks off a
+    background thread; the UI polls /api/firmware/flash_status for progress."""
+    if recording_state.get('is_recording'):
+        return jsonify({
+            'error': 'cannot flash while a recording is active — stop first'
+        }), 409
+
+    if firmware_manager.flash_state.get('active'):
+        return jsonify({'error': 'a flash is already in progress'}), 409
+
+    if not firmware_manager.toolchain_installed():
+        return jsonify({
+            'error': 'firmware toolchain not installed on this Pi. '
+                     'Run `sudo ./install.sh` from the repo root.'
+        }), 409
+
+    ota_password = os.getenv('OTA_PASSWORD', '')
+    if not ota_password:
+        return jsonify({
+            'error': 'OTA_PASSWORD is not set in the Pi .env file — '
+                     'rerun install.sh to generate one.'
+        }), 409
+
+    body = request.json or {}
+    targets, err = _resolve_flash_targets(body)
+    if err is not None:
+        return err
+
+    if not targets:
+        return jsonify({
+            'success': True,
+            'message': 'all selected devices are already current',
+            'targets': [],
+        })
+
+    target_ids = [t[0] for t in targets]
+    current_versions = {t[0]: t[1] for t in targets}
+
+    def ip_lookup(device_id):
+        return _device_addrs.get(device_id)
+
+    def run():
+        firmware_manager.flash_fleet(
+            targets=target_ids,
+            password=ota_password,
+            device_ip_lookup=ip_lookup,
+            current_versions=current_versions,
+        )
+
+    threading.Thread(target=run, daemon=True).start()
+
+    return jsonify({
+        'success': True,
+        'started': True,
+        'targets': target_ids,
+        'available_version': firmware_manager.available_version(),
+    })
+
+
+@app.route('/api/firmware/flash_status')
+def firmware_flash_status():
+    return jsonify(firmware_manager.flash_state)
+
+
+@app.route('/api/firmware/upload', methods=['POST'])
+def firmware_upload():
+    """Fallback path for when the Pi can't build (e.g. arduino-cli broken):
+    accept a prebuilt .bin from the developer's machine."""
+    if 'firmware' not in request.files:
+        return jsonify({'error': 'missing firmware file (multipart field "firmware")'}), 400
+    firmware_manager.BUILD_DIR.mkdir(exist_ok=True)
+    f = request.files['firmware']
+    f.save(str(firmware_manager.FIRMWARE_BIN))
+    return jsonify({
+        'success': True,
+        'size_bytes': firmware_manager.FIRMWARE_BIN.stat().st_size,
+    })
 
 
 @app.route('/api/upgrade', methods=['POST'])

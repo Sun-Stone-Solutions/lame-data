@@ -39,6 +39,11 @@ EXPECTED_ROUTES = {
     '/api/sessions',
     '/api/session_data/<filename>',
     '/api/recent_horses',
+    # Firmware / OTA fleet flash
+    '/api/firmware',
+    '/api/firmware/flash',
+    '/api/firmware/flash_status',
+    '/api/firmware/upload',
     # Management
     '/api/download/<filename>',
     '/api/download_batch',

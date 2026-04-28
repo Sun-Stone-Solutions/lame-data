@@ -2,8 +2,14 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 #include "config.h"
 #include "esp_mac.h"
+
+// Bump this when shipping a firmware-affecting change. The Pi reads this
+// string verbatim from the source file and compares it against what each
+// stick reports over BAT to drive the fleet-update banner.
+const char* FIRMWARE_VERSION = "1.0.0";
 
 // Device ID derived from hardware MAC address
 String deviceID;
@@ -52,6 +58,25 @@ const unsigned long DISPLAY_TIMEOUT = 2000;
 unsigned long lastButtonCheck = 0;
 const unsigned long BUTTON_CHECK_INTERVAL = 1000;  // ms
 
+// USB power management — when plugged into the charging hub, keep the screen
+// on so you can glance at all five sticks and confirm they're charging.
+bool usbPowered = false;
+unsigned long lastPowerCheck = 0;
+unsigned long lastPluggedInRefresh = 0;
+const unsigned long POWER_CHECK_INTERVAL = 2000;       // poll VBUS every 2s
+const unsigned long PLUGGED_IN_REFRESH_INTERVAL = 10000; // redraw battery % every 10s while plugged
+
+// AXP192 power-input-status register: bit 5 = VBUS present (USB plugged in).
+bool isUsbPowered() {
+  return (M5.Axp.Read8bit(0x00) & 0x20) != 0;
+}
+
+// AXP192 power-operation-mode register: bit 6 = battery actively charging.
+// Distinct from "plugged in but already full" — useful for accurate labeling.
+bool isChargingActive() {
+  return (M5.Axp.Read8bit(0x01) & 0x40) != 0;
+}
+
 String getDeviceID() {
   // Use device-unique portion of MAC (bytes 3, 4, 5 in standard order)
   uint8_t mac[6];
@@ -89,35 +114,89 @@ void setup() {
   delay(1000);
 }
 
+// Runs once per successful WiFi connect. Hostname is per-device so the fleet
+// shows up distinctly in mDNS browsers (Arduino IDE Network Ports, PlatformIO,
+// `dns-sd -B _arduino._tcp` from the Pi).
+void setupOTA() {
+  String hostname = "horse-" + deviceID;
+  ArduinoOTA.setHostname(hostname.c_str());
+  ArduinoOTA.setPassword(otaPassword);
+
+  ArduinoOTA.onStart([]() {
+    // Flash incoming — light the LCD so the user has visual confirmation.
+    M5.Axp.ScreenBreath(50);
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setRotation(0);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.setCursor(10, 40);
+    M5.Lcd.setTextColor(YELLOW);
+    M5.Lcd.print("Updating");
+    M5.Lcd.setCursor(10, 70);
+    M5.Lcd.print("Firmware");
+    M5.Lcd.setCursor(10, 110);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.print("0%");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    int pct = total > 0 ? (progress * 100) / total : 0;
+    // Overwrite just the percentage line to avoid full-screen flicker.
+    M5.Lcd.fillRect(10, 110, 120, 24, BLACK);
+    M5.Lcd.setCursor(10, 110);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.printf("%d%%", pct);
+  });
+
+  ArduinoOTA.onEnd([]() {
+    M5.Lcd.fillRect(10, 110, 120, 24, BLACK);
+    M5.Lcd.setCursor(10, 110);
+    M5.Lcd.setTextColor(GREEN);
+    M5.Lcd.print("Rebooting");
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(10, 60);
+    M5.Lcd.setTextColor(RED);
+    M5.Lcd.print("OTA FAILED");
+    M5.Lcd.setCursor(10, 100);
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.printf("err=%d", (int)error);
+  });
+
+  ArduinoOTA.begin();
+}
+
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  
+
   // Try each network in priority order
   for (int i = 0; i < NUM_NETWORKS; i++) {
     WiFi.begin(networks[i].ssid, networks[i].password);
-    
+
     // Wait up to 10 seconds for connection
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 20) {
       delay(500);
       attempts++;
     }
-    
+
     if (WiFi.status() == WL_CONNECTED) {
       // Successfully connected!
       connectedNetworkIndex = i;
       currentPiIP = networks[i].piIP;
       setCpuFrequencyMhz(160);
       wasConnected = true;
+      setupOTA();
       return;
     }
-    
+
     // Failed to connect to this network, try next one
     WiFi.disconnect();
     delay(500);
   }
-  
+
   // Failed to connect to any network
   connectedNetworkIndex = -1;
   setCpuFrequencyMhz(80);
@@ -149,12 +228,13 @@ void checkConnection() {
         currentPiIP = networks[i].piIP;
         setCpuFrequencyMhz(160);
         wasConnected = true;
+        setupOTA();
         return;
       }
-      
+
       WiFi.disconnect();
     }
-    
+
     // Still not connected, turn off WiFi to save power
     WiFi.mode(WIFI_OFF);
   }
@@ -208,7 +288,20 @@ void showStatus() {
     M5.Lcd.print("Disconnected");
   }
 
-  // Display FIFO overflow count
+  // Charging status — only shown when USB is plugged in.
+  if (isUsbPowered()) {
+    M5.Lcd.setCursor(10, 140);
+    if (isChargingActive()) {
+      M5.Lcd.setTextColor(GREEN);
+      M5.Lcd.print("Charging");
+    } else {
+      M5.Lcd.setTextColor(CYAN);
+      M5.Lcd.print("Charged");
+    }
+  }
+
+  // Display FIFO overflow count — overlapped with charging line only if both
+  // present; OVF wins because a lost-sample condition matters more than power.
   if (fifoOverflows > 0) {
     M5.Lcd.setCursor(10, 140);
     M5.Lcd.setTextColor(RED);
@@ -217,12 +310,44 @@ void showStatus() {
 }
 
 void checkDisplayTimeout() {
+  // When plugged into the charging hub we deliberately keep the screen lit
+  // so all five sticks are visible at a glance. The USB poll re-renders the
+  // battery values every few seconds so stale info doesn't sit on screen.
+  if (usbPowered) return;
+
   if (displayOn && (millis() - displayOnTime > DISPLAY_TIMEOUT)) {
     // Turn off display after timeout
     M5.Axp.ScreenBreath(0);
     M5.Lcd.fillScreen(BLACK);
     displayOn = false;
   }
+}
+
+// Poll VBUS presence; drive the display on/off transitions. Called from loop().
+void checkPowerState() {
+  if (millis() - lastPowerCheck < POWER_CHECK_INTERVAL) {
+    return;
+  }
+  lastPowerCheck = millis();
+
+  bool nowUsb = isUsbPowered();
+
+  if (nowUsb && !usbPowered) {
+    // Just plugged in — wake the screen.
+    showStatus();
+    lastPluggedInRefresh = millis();
+  } else if (!nowUsb && usbPowered) {
+    // Just unplugged — hand control back to the normal timeout path so the
+    // screen blanks ~2s from now instead of staying on indefinitely.
+    displayOnTime = millis();
+  } else if (nowUsb && displayOn &&
+             (millis() - lastPluggedInRefresh > PLUGGED_IN_REFRESH_INTERVAL)) {
+    // Periodic refresh while plugged — battery % creeping up, etc.
+    showStatus();
+    lastPluggedInRefresh = millis();
+  }
+
+  usbPowered = nowUsb;
 }
 
 uint16_t readFIFOCount() {
@@ -254,14 +379,23 @@ bool checkFIFOOverflow() {
 }
 
 void loop() {
-  // Auto-turn off display after timeout
+  // Poll USB/charging state; drives screen on/off transitions while plugged
+  // into the charging hub. Must run before checkDisplayTimeout so usbPowered
+  // is current when the timeout logic decides whether to blank.
+  checkPowerState();
+
+  // Auto-turn off display after timeout (no-op while plugged in).
   checkDisplayTimeout();
-  
+
   // Check WiFi connection periodically
   checkConnection();
   
   // Only sample and stream if connected
   if (WiFi.status() == WL_CONNECTED) {
+    // Service any pending OTA transfer. Non-blocking — if an update is being
+    // pushed by the Pi, this is where it actually lands.
+    ArduinoOTA.handle();
+
     // Check for incoming sync broadcast (non-blocking)
     int packetSize = udp.parsePacket();
     if (packetSize > 0) {
@@ -386,9 +520,18 @@ void sendBatteryStatus() {
   if (battPercent > 100) battPercent = 100;
   if (battPercent < 0) battPercent = 0;
 
-  char buffer[100];
-  snprintf(buffer, sizeof(buffer), "BAT,%s,%.2f,%.0f,%lu",
-           deviceID.c_str(), battVoltage, battPercent, fifoOverflows);
+  // Report "charging" as 1 when VBUS is present AND the battery is actively
+  // taking charge. The Pi parser is backwards-compatible and treats the field
+  // as optional (defaults to 0) so old firmware still parses cleanly.
+  int charging = (isUsbPowered() && isChargingActive()) ? 1 : 0;
+
+  // Field 7 is the running firmware version string so the Pi can detect
+  // fleet-wide drift. Older Pi code (pre-firmware-manager) just ignored
+  // trailing unknown fields.
+  char buffer[128];
+  snprintf(buffer, sizeof(buffer), "BAT,%s,%.2f,%.0f,%lu,%d,%s",
+           deviceID.c_str(), battVoltage, battPercent, fifoOverflows, charging,
+           FIRMWARE_VERSION);
 
   udp.beginPacket(currentPiIP, udpPort);
   udp.print(buffer);

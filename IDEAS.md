@@ -36,3 +36,24 @@ Parking lot for features and refactors that aren't ready to implement yet. Move 
 - After writing, update root `README.md` "What works today" list to reflect reality (protocols, themes, multi-sensor, test gate).
 
 **Tradeoff:** it's a real writing project, not a code pass — best done in one focused session with enough barnside context to draw on, not interleaved with feature work.
+
+---
+
+## Firmware unit test harness (PlatformIO + Unity)
+
+**Status:** not started
+
+**Motivation:** Today the M5StickC firmware at `hardware/m5stickc/horse_sensor/horse_sensor.ino` has zero test coverage. That's been fine while the file was small and rarely touched, but as features accumulate (USB detection, charging state machine, future sleep modes, etc.) the risk of a silent regression grows. The Pi side has a strong test gate; firmware should too — ideally before the first bug slips through to a deployed stick.
+
+**Sketch:**
+- Migrate the project to PlatformIO (`platformio.ini` next to the `.ino`, or convert to a proper `src/main.cpp`). Keeps Arduino IDE compatibility.
+- Refactor the state machine pieces (display mode, sync handling, batch buffering) into pure functions or small classes that don't directly touch `M5.Axp` / `M5.Lcd`. Hardware calls stay in the `.ino` entry points.
+- Add PlatformIO `test_native` environment with Unity. Write tests for:
+  - Display state transitions (plug in → on, unplug → timer reset, button press → on-with-timeout).
+  - BAT message formatting (extend/contract the trailing fields).
+  - Sync offset calculation.
+- CI: add a second job to `.github/workflows/test.yml` running `pio test -e native`.
+
+**Tests / Verification:** the refactor itself is the risky part — verify by running on the real sticks before/after and confirming identical UDP output for a 60s sample window.
+
+**Tradeoff:** ~4 hours of setup + refactor. Pays off once firmware has ~2-3 more features layered on; premature today given the file is 400 lines and stable. Revisit when the next non-trivial change (e.g. sleep modes, multi-protocol support, sensor self-test) comes up.
