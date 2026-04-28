@@ -9,7 +9,7 @@
 // Bump this when shipping a firmware-affecting change. The Pi reads this
 // string verbatim from the source file and compares it against what each
 // stick reports over BAT to drive the fleet-update banner.
-const char* FIRMWARE_VERSION = "1.0.2";
+const char* FIRMWARE_VERSION = "1.0.3";
 
 // Device ID derived from hardware MAC address
 String deviceID;
@@ -75,6 +75,34 @@ bool isUsbPowered() {
 // Distinct from "plugged in but already full" — useful for accurate labeling.
 bool isChargingActive() {
   return (M5.Axp.Read8bit(0x01) & 0x40) != 0;
+}
+
+// Draw a battery icon with percent fill + a charging bolt to the right when
+// USB is plugged in. Designed to live on the same LCD row that used to be
+// "Batt: NN%" — visually communicates both state and level in less space.
+void drawBatteryIcon(int x, int y, int pct, bool plugged) {
+  // Body: 30x14 rect with a 2-pixel terminal nub on the right.
+  const int W = 30, H = 14;
+  M5.Lcd.drawRect(x, y, W, H, WHITE);
+  M5.Lcd.fillRect(x + W, y + 4, 2, 6, WHITE);
+
+  // Fill width proportional to percentage (max 26 px inside the 30 px body
+  // accounting for the 2 px border on each side).
+  int fillW = (pct * (W - 4)) / 100;
+  uint16_t fill;
+  if (plugged) fill = GREEN;
+  else if (pct > 50) fill = GREEN;
+  else if (pct > 20) fill = ORANGE;
+  else fill = RED;
+  if (fillW > 0) M5.Lcd.fillRect(x + 2, y + 2, fillW, H - 4, fill);
+
+  // Lightning bolt to the right of the battery, when plugged in. Two
+  // filled triangles forming a Z / bolt shape.
+  if (plugged) {
+    int bx = x + W + 6, by = y - 1;
+    M5.Lcd.fillTriangle(bx + 4, by,      bx,     by + 8, bx + 3, by + 8, YELLOW);
+    M5.Lcd.fillTriangle(bx + 3, by + 8,  bx + 7, by + 8, bx + 3, by + 16, YELLOW);
+  }
 }
 
 String getDeviceID() {
@@ -260,23 +288,27 @@ void showStatus() {
   M5.Lcd.setTextColor(CYAN);
   M5.Lcd.printf("%s\n", deviceName);
 
-  // Display Battery
+  // Battery icon + percent + charging bolt, all on one row. The icon's
+  // fill color encodes level (green/orange/red) and the bolt to the right
+  // signals "USB power present" — replaces the old text-only "Batt: NN%"
+  // line and the separate "Charging/Charged" line below it.
   float battVoltage = M5.Axp.GetBatVoltage();
   float battPercent = (battVoltage - 3.0) / (4.2 - 3.0) * 100;
   if (battPercent > 100) battPercent = 100;
   if (battPercent < 0) battPercent = 0;
 
-  M5.Lcd.setCursor(10, 80);
+  bool plugged = isUsbPowered();
+  drawBatteryIcon(10, 82, (int)battPercent, plugged);
 
-  // Color code battery level
-  if (battPercent > 50) {
-    M5.Lcd.setTextColor(GREEN);
-  } else if (battPercent > 20) {
-    M5.Lcd.setTextColor(ORANGE);
-  } else {
-    M5.Lcd.setTextColor(RED);
-  }
-  M5.Lcd.printf("Batt: %.0f%%\n", battPercent);
+  // Percent text after the icon. Color matches fill so the eye links them.
+  uint16_t pctColor;
+  if (plugged) pctColor = GREEN;
+  else if (battPercent > 50) pctColor = GREEN;
+  else if (battPercent > 20) pctColor = ORANGE;
+  else pctColor = RED;
+  M5.Lcd.setCursor(60, 80);
+  M5.Lcd.setTextColor(pctColor);
+  M5.Lcd.printf("%.0f%%", battPercent);
 
   // Display connection status and network name
   M5.Lcd.setCursor(10, 110);
@@ -288,27 +320,20 @@ void showStatus() {
     M5.Lcd.print("No WiFi");
   }
 
-  // Charging status — only shown when USB is plugged in.
-  if (isUsbPowered()) {
+  // Sample-loss counter — short label so it fits on one row.
+  if (fifoOverflows > 0) {
     M5.Lcd.setCursor(10, 140);
-    if (isChargingActive()) {
-      M5.Lcd.setTextColor(GREEN);
-      M5.Lcd.print("Charging");
-    } else {
-      M5.Lcd.setTextColor(CYAN);
-      M5.Lcd.print("Charged");
-    }
+    M5.Lcd.setTextColor(RED);
+    M5.Lcd.printf("Faults: %lu", fifoOverflows);
   }
 
-  // FIFO overflow count gets its own line so it never overlaps the charging
-  // status. Both are signal — power state and lost samples — and you want
-  // to see them at the same time, especially when a stick is still on the
-  // hub but somehow dropping samples.
-  if (fifoOverflows > 0) {
-    M5.Lcd.setCursor(10, 170);
-    M5.Lcd.setTextColor(RED);
-    M5.Lcd.printf("FIFO OVF: %lu", fifoOverflows);
-  }
+  // Firmware version in small grey at the bottom — visual confirmation that
+  // an OTA flash actually landed.
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setCursor(10, 220);
+  M5.Lcd.setTextColor(DARKGREY);
+  M5.Lcd.printf("v%s", FIRMWARE_VERSION);
+  M5.Lcd.setTextSize(2);  // restore for the next call
 }
 
 void checkDisplayTimeout() {
