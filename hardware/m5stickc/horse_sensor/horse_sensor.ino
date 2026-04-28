@@ -9,7 +9,7 @@
 // Bump this when shipping a firmware-affecting change. The Pi reads this
 // string verbatim from the source file and compares it against what each
 // stick reports over BAT to drive the fleet-update banner.
-const char* FIRMWARE_VERSION = "1.0.0";
+const char* FIRMWARE_VERSION = "1.0.1";
 
 // Device ID derived from hardware MAC address
 String deviceID;
@@ -300,10 +300,12 @@ void showStatus() {
     }
   }
 
-  // Display FIFO overflow count — overlapped with charging line only if both
-  // present; OVF wins because a lost-sample condition matters more than power.
+  // FIFO overflow count gets its own line so it never overlaps the charging
+  // status. Both are signal — power state and lost samples — and you want
+  // to see them at the same time, especially when a stick is still on the
+  // hub but somehow dropping samples.
   if (fifoOverflows > 0) {
-    M5.Lcd.setCursor(10, 140);
+    M5.Lcd.setCursor(10, 170);
     M5.Lcd.setTextColor(RED);
     M5.Lcd.printf("FIFO OVF: %lu", fifoOverflows);
   }
