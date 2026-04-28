@@ -206,13 +206,25 @@ def build_bin():
         tail = (result.stderr or result.stdout or '')[-800:]
         raise RuntimeError(f'arduino-cli compile failed:\n{tail}')
 
-    # arduino-cli writes several artifacts; we want the plain .bin.
-    produced = list(BUILD_DIR.glob('*.bin'))
+    # arduino-cli writes several .bin artifacts:
+    #   <sketch>.ino.bin              ← the application (this is what we want)
+    #   <sketch>.ino.bootloader.bin   ← bootloader, USB-flash only
+    #   <sketch>.ino.partitions.bin   ← partition table (~3 KB), USB-flash only
+    #   <sketch>.ino.merged.bin       ← single-image USB flash bundle
+    # OTA pushes the application image only — sending any of the others
+    # results in a corrupt-firmware reject after the OTA handshake succeeds
+    # (which is what bit us once already).
+    produced = [
+        p for p in BUILD_DIR.glob('*.ino.bin')
+        if not p.name.endswith(('.bootloader.bin', '.partitions.bin', '.merged.bin'))
+    ]
     if not produced:
-        raise RuntimeError('compile succeeded but produced no .bin')
-
-    # Normalize to a stable filename the flash step expects.
-    chosen = sorted(produced, key=lambda p: p.stat().st_mtime)[-1]
+        raise RuntimeError('compile succeeded but produced no application .bin')
+    if len(produced) > 1:
+        # Multiple sketches in the build dir — pick the freshest. Shouldn't
+        # happen with a single-sketch build but be explicit.
+        produced.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    chosen = produced[0]
     if chosen != FIRMWARE_BIN:
         shutil.copy2(chosen, FIRMWARE_BIN)
 
