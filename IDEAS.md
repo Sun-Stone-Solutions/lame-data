@@ -57,3 +57,23 @@ Parking lot for features and refactors that aren't ready to implement yet. Move 
 **Tests / Verification:** the refactor itself is the risky part — verify by running on the real sticks before/after and confirming identical UDP output for a 60s sample window.
 
 **Tradeoff:** ~4 hours of setup + refactor. Pays off once firmware has ~2-3 more features layered on; premature today given the file is 400 lines and stable. Revisit when the next non-trivial change (e.g. sleep modes, multi-protocol support, sensor self-test) comes up.
+
+---
+
+## Auto-flash USB-tethered sticks (udev daemon)
+
+**Status:** not started — manual fallback exists at `software/raspberry-pi/scripts/flash-stick.sh`.
+
+**Motivation:** Two related pain points solved by the same mechanism. (1) If an OTA flash fails partway through (WiFi hiccup, power glitch), the stick is bricked until someone manually plugs it in and runs the flash script — defeats the point of going OTA-only. (2) A brand-new stick out of the box has no firmware and no WiFi credentials, so it can't participate in OTA at all; today this requires a manual flash. If the Pi could detect a USB-connected ESP32 and automatically flash whatever's currently checked into the firmware source, both cases collapse into "just plug it into the Pi's USB hub" — recovery and provisioning become invisible.
+
+**Sketch:**
+- udev rule (or `pyudev` watcher inside `horse_recorder`) fires on `/dev/ttyUSB*` arrival.
+- Daemon checks an opt-in setting (`AUTO_USB_FLASH=true` in `.env`) before doing anything — don't want a random ESP32 plugged into the Pi getting silently reflashed.
+- Optionally: probe the connected device's current firmware via serial (add a `VERSION?` command to the .ino's setup) and skip if already current. Without that probe, always reflash.
+- Reuse `firmware_manager.build_bin()` to produce the .bin, then invoke the same `arduino-cli compile --upload` that `scripts/flash-stick.sh` runs.
+- UI surface: when a USB device is detected, a row appears in the Settings device-config section like "New stick on /dev/ttyUSB2 — auto-flashing v1.0.4..." with a progress bar.
+- First-boot provisioning falls out for free: the `config.h` Pi generates from `.env` already includes WiFi creds, so any freshly-flashed stick automatically joins the fleet.
+
+**Tests / Verification:** unit-test the version-probe parser with a mocked serial. Real verification is manual — deliberately interrupt an OTA mid-stream to brick a stick, plug it into the Pi's USB hub, confirm it auto-recovers within ~30s and rejoins over WiFi.
+
+**Tradeoff:** the Pi gains a background udev watcher and write permissions on `/dev/ttyUSB*` (already covered — install.sh adds the user to `dialout`). The bigger concern is "silently reflash anything plugged in" surprise, which the opt-in env flag addresses. Worth doing once OTA proves reliable enough that *failures* (rather than initial provisioning) are the primary use case — until then the manual script is fine.

@@ -72,7 +72,15 @@ The Pi builds the M5StickC firmware from source (`hardware/m5stickc/horse_sensor
 
 ### Recovery
 
-If a flash fails mid-way (stick unplugged, WiFi drop, power loss), the stick may end up in a half-written state. Recover via one USB flash from Arduino IDE or PlatformIO — the sticks' bootloader always accepts USB uploads regardless of whether the application firmware is valid.
+If a flash fails mid-way (stick unplugged, WiFi drop, power loss), the stick may end up in a half-written state. Plug it into the Pi via USB and run:
+
+```bash
+~/lame-data/software/raspberry-pi/scripts/flash-stick.sh
+```
+
+The script auto-detects `/dev/ttyUSB*`, compiles the current firmware source with the OTA-capable partition scheme, uploads via USB, and confirms via `/api/status` that the stick reconnected on the new version. Same script also handles the one-time bootstrap flash for a brand-new stick before OTA can take over.
+
+If the Pi isn't available, USB flash from Arduino IDE on a laptop works too — just make sure **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** is selected, otherwise OTA won't work afterward.
 
 ## Auto-Start (systemd)
 
