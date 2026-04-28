@@ -60,7 +60,10 @@ _ESPOTA_PROGRESS_RE = re.compile(r'(\d+)%')
 
 flash_state = {
     'active': False,
-    'targets': {},      # device_id -> {state, progress, error, version_at_start}
+    'stage': None,       # 'building' | 'flashing' | 'done' — gives the UI
+                         # something useful to render during the ~30s build
+                         # phase when no per-device progress is moving yet.
+    'targets': {},       # device_id -> {state, progress, error, version_at_start}
     'started_at': None,
     'finished_at': None,
 }
@@ -71,6 +74,7 @@ _flash_lock = threading.Lock()
 def reset_flash_state():
     with _flash_lock:
         flash_state['active'] = False
+        flash_state['stage'] = None
         flash_state['targets'] = {}
         flash_state['started_at'] = None
         flash_state['finished_at'] = None
@@ -331,6 +335,7 @@ def flash_fleet(targets, password, device_ip_lookup, current_versions=None):
 
     with _flash_lock:
         flash_state['active'] = True
+        flash_state['stage'] = 'building'
         flash_state['started_at'] = datetime.datetime.now().isoformat()
         flash_state['finished_at'] = None
         flash_state['targets'] = {
@@ -351,9 +356,13 @@ def flash_fleet(targets, password, device_ip_lookup, current_versions=None):
             for device_id in flash_state['targets']:
                 flash_state['targets'][device_id]['state'] = 'failed'
                 flash_state['targets'][device_id]['error'] = f'build: {e}'
+            flash_state['stage'] = 'done'
             flash_state['active'] = False
             flash_state['finished_at'] = datetime.datetime.now().isoformat()
         return
+
+    with _flash_lock:
+        flash_state['stage'] = 'flashing'
 
     for device_id in targets:
         device_ip = device_ip_lookup(device_id)
@@ -374,5 +383,6 @@ def flash_fleet(targets, password, device_ip_lookup, current_versions=None):
             _set_target(device_id, state='failed', error=str(e))
 
     with _flash_lock:
+        flash_state['stage'] = 'done'
         flash_state['active'] = False
         flash_state['finished_at'] = datetime.datetime.now().isoformat()

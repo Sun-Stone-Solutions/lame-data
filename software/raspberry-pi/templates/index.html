@@ -573,11 +573,27 @@
             const container = document.getElementById('flashModalTargets');
             const targets = state.targets || {};
             const ids = Object.keys(targets);
+
+            // Stage banner — gives the user something to read during the
+            // ~30s build phase when no per-device progress is moving.
+            let banner = '';
+            if (state.stage === 'building') {
+                banner = '<p style="margin:0 0 0.75rem 0;"><em>Building firmware… (~30s on first build)</em></p>';
+            } else if (state.stage === 'flashing') {
+                const done = ids.filter(i => ['done','failed'].includes(targets[i].state)).length;
+                const inProgress = ids.find(i => targets[i].state === 'running');
+                const idx = inProgress ? done + 1 : done;
+                banner = `<p style="margin:0 0 0.75rem 0;"><em>Flashing ${Math.min(idx, ids.length)} of ${ids.length}…</em></p>`;
+            } else if (state.stage === 'done') {
+                const ok = ids.filter(i => targets[i].state === 'done').length;
+                banner = `<p style="margin:0 0 0.75rem 0;"><strong>Complete: ${ok}/${ids.length} sensors updated.</strong></p>`;
+            }
+
             if (ids.length === 0) {
-                container.innerHTML = '<p>Preparing flash…</p>';
+                container.innerHTML = banner + '<p>Preparing flash…</p>';
                 return;
             }
-            container.innerHTML = ids.map(id => {
+            container.innerHTML = banner + ids.map(id => {
                 const t = targets[id];
                 const pct = t.progress || 0;
                 let statusText;

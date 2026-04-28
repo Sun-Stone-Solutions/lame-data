@@ -9,7 +9,7 @@
 // Bump this when shipping a firmware-affecting change. The Pi reads this
 // string verbatim from the source file and compares it against what each
 // stick reports over BAT to drive the fleet-update banner.
-const char* FIRMWARE_VERSION = "1.0.4";
+const char* FIRMWARE_VERSION = "1.0.5";
 
 // Device ID derived from hardware MAC address
 String deviceID;
