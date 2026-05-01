@@ -1209,7 +1209,25 @@ def upgrade_software():
     if result.returncode != 0:
         return jsonify({'success': False, 'steps': steps}), 500
 
-    # Step 3: schedule service restart (delayed so response can be sent)
+    # Step 3: pre-build firmware so the next fleet-flash button click skips
+    # the ~30s arduino-cli compile. Best-effort: if the toolchain isn't ready
+    # or the compile fails, log it but don't fail the upgrade — the next OTA
+    # request will rebuild on demand.
+    venv_python = str(SCRIPT_DIR / 'venv' / 'bin' / 'python')
+    prebuild = str(SCRIPT_DIR / 'scripts' / 'prebuild_firmware.py')
+    result = subprocess.run(
+        [venv_python, prebuild],
+        capture_output=True, text=True, timeout=300
+    )
+    steps.append({
+        'step': 'prebuild firmware',
+        'success': result.returncode == 0,
+        'output': result.stdout.strip(),
+        # Non-fatal: keep error info but don't bail.
+        'error': result.stderr.strip() if result.returncode != 0 else ''
+    })
+
+    # Step 4: schedule service restart (delayed so response can be sent)
     def do_restart():
         threading.Event().wait(1.5)
         subprocess.Popen(['sudo', 'systemctl', 'restart', 'horse-recorder'])

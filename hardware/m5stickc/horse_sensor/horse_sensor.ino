@@ -9,7 +9,7 @@
 // Bump this when shipping a firmware-affecting change. The Pi reads this
 // string verbatim from the source file and compares it against what each
 // stick reports over BAT to drive the fleet-update banner.
-const char* FIRMWARE_VERSION = "1.0.5";
+const char* FIRMWARE_VERSION = "1.0.6";
 
 // Device ID derived from hardware MAC address
 String deviceID;
@@ -222,40 +222,49 @@ void setupOTA() {
   ArduinoOTA.begin();
 }
 
-void connectToWiFi() {
+// Walks networks[] in priority order. For each, calls WiFi.begin and polls up
+// to maxAttemptsPerNetwork x 500ms for association. On the first success,
+// sets the connected-state globals (incl. CPU freq, OTA) and returns true.
+// On total failure, turns the radio off and returns false. Used by both the
+// boot connect (long timeout) and the periodic retry (short timeout) so the
+// two stay in sync — earlier the retry path waited only 500ms per network,
+// which was too short to associate, so dropped sticks never came back.
+bool tryConnectAnyNetwork(int maxAttemptsPerNetwork) {
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-  // Try each network in priority order
   for (int i = 0; i < NUM_NETWORKS; i++) {
     WiFi.begin(networks[i].ssid, networks[i].password);
 
-    // Wait up to 10 seconds for connection
     int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    while (WiFi.status() != WL_CONNECTED && attempts < maxAttemptsPerNetwork) {
       delay(500);
       attempts++;
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      // Successfully connected!
       connectedNetworkIndex = i;
       currentPiIP = networks[i].piIP;
       setCpuFrequencyMhz(160);
       wasConnected = true;
       setupOTA();
-      return;
+      return true;
     }
 
-    // Failed to connect to this network, try next one
     WiFi.disconnect();
     delay(500);
   }
 
-  // Failed to connect to any network
   connectedNetworkIndex = -1;
-  setCpuFrequencyMhz(80);
   WiFi.mode(WIFI_OFF);
+  return false;
+}
+
+void connectToWiFi() {
+  // 20 x 500ms = up to 10s per network on cold boot.
+  if (!tryConnectAnyNetwork(20)) {
+    setCpuFrequencyMhz(80);
+  }
 }
 
 void checkConnection() {
@@ -263,36 +272,20 @@ void checkConnection() {
     return;
   }
   lastConnectionCheck = millis();
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    if (wasConnected) {
-      wasConnected = false;
-      connectedNetworkIndex = -1;
-      setCpuFrequencyMhz(80);
-    }
-    
-    // Try to reconnect to any available network
-    WiFi.mode(WIFI_STA);
-    
-    for (int i = 0; i < NUM_NETWORKS; i++) {
-      WiFi.begin(networks[i].ssid, networks[i].password);
-      delay(500);
-      
-      if (WiFi.status() == WL_CONNECTED) {
-        connectedNetworkIndex = i;
-        currentPiIP = networks[i].piIP;
-        setCpuFrequencyMhz(160);
-        wasConnected = true;
-        setupOTA();
-        return;
-      }
 
-      WiFi.disconnect();
-    }
-
-    // Still not connected, turn off WiFi to save power
-    WiFi.mode(WIFI_OFF);
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
   }
+
+  if (wasConnected) {
+    wasConnected = false;
+    connectedNetworkIndex = -1;
+    setCpuFrequencyMhz(80);
+  }
+
+  // 6 x 500ms = up to 3s per network on retry. Long enough to actually
+  // associate + DHCP, short enough not to stall sample sending for long.
+  tryConnectAnyNetwork(6);
 }
 
 void showStatus() {

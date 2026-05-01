@@ -229,6 +229,14 @@ else
         # arduino-cli lib install is idempotent so safe to rerun.
         echo "  Installing Arduino library dependencies..."
         sudo -u "$REPO_OWNER_FW" arduino-cli lib install "M5StickCPlus"
+
+        # Pre-build the firmware so the first fleet-flash button click on
+        # the web UI skips the arduino-cli compile (~30s on a cold cache).
+        # Best-effort: build failures don't block install.
+        echo "  Pre-building firmware (warm-up cache for fleet flashing)..."
+        sudo -u "$REPO_OWNER_FW" "$VENV_DIR/bin/python" \
+            "$PI_DIR/scripts/prebuild_firmware.py" || \
+            echo "  (continuing despite prebuild failure)"
     fi
 fi
 

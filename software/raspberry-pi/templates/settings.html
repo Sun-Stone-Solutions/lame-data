@@ -170,6 +170,7 @@
         <div class="spinner"></div>
         <div class="overlay-title" id="overlayTitle"></div>
         <div class="overlay-detail" id="overlayDetail"></div>
+        <div class="overlay-detail" id="overlayElapsed" style="margin-top:0.5rem;"></div>
     </div>
 
     <script>
@@ -453,7 +454,13 @@
         }
 
         function confirmUpgrade() {
-            showDialog('Update Software', 'This will pull the latest code, install dependencies, and restart the service.', 'upgrade');
+            showDialog(
+                'Update Software',
+                'Pulls the latest code, installs dependencies, runs tests, ' +
+                'pre-builds the M5StickC firmware, and restarts the service. ' +
+                'Typically takes 1–3 minutes (longer on a cold build cache).',
+                'upgrade'
+            );
         }
         function confirmReboot() {
             showDialog('Reboot Pi', 'The Pi will reboot. The web UI will be unavailable for about a minute.', 'reboot');
@@ -477,26 +484,59 @@
 
         function hideOverlay() {
             document.getElementById('overlay').style.display = 'none';
+            document.getElementById('overlayElapsed').textContent = '';
+        }
+
+        // Long-running-action elapsed timer. Started when an upgrade kicks off,
+        // ticks every second, cleared when the page reloads or hideOverlay()
+        // runs. Helps the user see that "1–3 minutes" estimate is real.
+        let upgradeTimerStart = null;
+        let upgradeTimerInterval = null;
+
+        function startUpgradeTimer() {
+            upgradeTimerStart = Date.now();
+            const tick = () => {
+                if (!upgradeTimerStart) return;
+                const elapsed = Math.floor((Date.now() - upgradeTimerStart) / 1000);
+                const m = Math.floor(elapsed / 60);
+                const s = elapsed % 60;
+                document.getElementById('overlayElapsed').textContent =
+                    `Elapsed: ${m}:${s.toString().padStart(2, '0')}`;
+            };
+            tick();
+            upgradeTimerInterval = setInterval(tick, 1000);
+        }
+
+        function stopUpgradeTimer() {
+            if (upgradeTimerInterval) clearInterval(upgradeTimerInterval);
+            upgradeTimerInterval = null;
+            upgradeTimerStart = null;
         }
 
         function executeAction(action) {
             document.getElementById('systemDialog').close();
 
             if (action === 'upgrade') {
-                showOverlay('Updating...', 'Pulling latest code and installing dependencies');
+                showOverlay(
+                    'Updating…',
+                    'Pulling code, installing deps, running tests, and pre-building firmware'
+                );
+                startUpgradeTimer();
                 fetch('/api/upgrade', { method: 'POST' })
                     .then(r => r.json())
                     .then(data => {
                         if (data.success) {
-                            showOverlay('Restarting...', 'Service is restarting, page will reload automatically');
-                            waitForReconnect();
+                            showOverlay('Restarting…', 'Service is restarting, page will reload automatically');
+                            waitForReconnect();  // keeps timer running until reconnect
                         } else {
+                            stopUpgradeTimer();
                             hideOverlay();
                             const err = data.steps.find(s => !s.success);
                             alert('Update failed at: ' + err.step + '\n' + err.error);
                         }
                     })
                     .catch(() => {
+                        stopUpgradeTimer();
                         hideOverlay();
                         alert('Update failed.');
                     });

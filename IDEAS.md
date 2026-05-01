@@ -77,3 +77,48 @@ Parking lot for features and refactors that aren't ready to implement yet. Move 
 **Tests / Verification:** unit-test the version-probe parser with a mocked serial. Real verification is manual — deliberately interrupt an OTA mid-stream to brick a stick, plug it into the Pi's USB hub, confirm it auto-recovers within ~30s and rejoins over WiFi.
 
 **Tradeoff:** the Pi gains a background udev watcher and write permissions on `/dev/ttyUSB*` (already covered — install.sh adds the user to `dialout`). The bigger concern is "silently reflash anything plugged in" surprise, which the opt-in env flag addresses. Worth doing once OTA proves reliable enough that *failures* (rather than initial provisioning) are the primary use case — until then the manual script is fine.
+
+---
+
+## Split `horse_recorder.py` into Flask blueprints
+
+**Status:** not started
+
+**Motivation:** `software/raspberry-pi/horse_recorder.py` has grown past 1300 lines and now carries at least seven distinct concerns: the Flask app, the UDP listener / sample hot path, `BufferedRecorder`, device-config + protocols load/save/migrate logic, recording APIs, protocol CRUD, sessions/download/segment APIs, cloud upload, firmware OTA orchestration, and system upgrade/shutdown. New features make the file longer and harder to reason about. Tests already pretend at module separation (`test_protocols_api.py`, `test_recording_api.py`, `test_sessions_api.py`, `test_firmware_api.py`) — the source code should mirror that.
+
+**Sketch:**
+- Move `BufferedRecorder` and the UDP listener thread + `send_sync_broadcast` into `app/recording_io.py`.
+- Convert each API surface to a Flask blueprint registered in a slimmed-down `horse_recorder.py`:
+  - `app/recording.py` — `/api/start`, `/api/stop`, `/api/sync`, `/api/status`
+  - `app/sessions.py` — `/api/sessions`, `/api/session_data/<f>`, `/api/recent_horses`, `/api/download*`, `/api/segment/<f>`, `_scan_sessions`
+  - `app/protocols.py` — protocol CRUD + `load_protocols` / `save_protocols` / `_migrate_protocols` / `_normalize_steps` / `_find_protocol` / `DEFAULT_PROTOCOLS`
+  - `app/devices.py` — `/api/device_config` + `load_device_config` / `save_device_config` / `_migrate_device_config`
+  - `app/cloud.py` — `/api/cloud_status`, `/api/upload/<f>`, `/api/upload_status/<f>`, `parse_csv_for_upload`
+  - `app/firmware_routes.py` — `/api/firmware*` (glue around the already-factored `firmware_manager.py`)
+  - `app/system.py` — `/api/upgrade`, `/api/shutdown`, page routes
+- Top-level `horse_recorder.py` becomes ~100 lines: env loading, app factory, blueprint registration, UDP listener boot, `__main__` entry.
+- Update `tests/conftest.py` and the existing test files to import from the new module paths. Most tests already use `client` and `horse_recorder.recording_state` — those keep working if `horse_recorder` re-exports the right names.
+
+**Tests / Verification:** the existing 79-test suite is the safety net. After the split: every test should still pass with no logic changes. Then run a real upgrade through the web UI + a fleet flash to confirm the integration paths still hang together.
+
+**Tradeoff:** pure restructuring with zero functional change is the riskiest kind of PR — easy to drop a route or break an import with no symptom until production. Mitigations: do it as its own commit (no feature work mixed in), keep the diff route-level (don't simultaneously rename functions or change signatures), and gate via the existing pytest suite + a manual end-to-end pass. Best done during a quiet stretch when OTA + recording are stable; deferred indefinitely otherwise.
+
+---
+
+## Unify the Pi upgrade flow: `/api/upgrade` should shell out to `upgrade.sh`
+
+**Status:** not started
+
+**Motivation:** The web "Update Software" button (`/api/upgrade` in `horse_recorder.py`) and the SSH `upgrade.sh` script implement two independent upgrade flows. They share `git pull` / `pip install` / pre-build / restart, but `upgrade.sh` also has the test gate, runtime-state preservation (`.upgrade-backup` of `protocols.json` / `device_config.json`), self re-exec into the pulled script, sourced-guard, and abort trap — none of which the API path does. Result: the web button is a footgun. It's worked in practice only because we've been running the SSH path in parallel; the first time someone hits the web button on a fresh runtime-state divergence, they'll re-live the conflict that took us a long debugging session to diagnose earlier. Worse, every time we tweak `upgrade.sh` (test gate, prebuild, future steps) we have to remember to mirror the change in `/api/upgrade` — and we won't.
+
+**Sketch:**
+- `/api/upgrade` becomes a thin wrapper: `subprocess.run(['bash', upgrade_sh, ...], capture_output=True, timeout=600)` and returns success/error based on exit code, with the last ~800 chars of combined stdout/stderr as the error context for the UI.
+- `upgrade.sh` already has step labels like `[3/5] Running tests...`. The wrapper can grep these out of the captured output and synthesize a `steps` array with the failed step name, preserving the existing UI alert shape (`Update failed at: <step>`).
+- `upgrade.sh` gets a non-interactive guard: the dirty-tree `read -p "Continue?"` prompt only runs when `[ -t 0 ]`. When called from Flask (no TTY), abort cleanly with a clear error rather than hang forever.
+- Delete the duplicated git/pip/prebuild logic from `horse_recorder.py:upgrade_software()` — net ~30-line reduction.
+
+**Tests / Verification:**
+- New `tests/test_upgrade_api.py` with `subprocess.run` monkey-patched: success path returns 200, failure path returns 500 with parsed step name in the body. Doesn't actually run upgrade.sh.
+- Manual: trigger an upgrade from the web UI on the Pi. Verify the test gate runs (look for `[3/5] Running tests...` in the response output), runtime-state files survive a pull that touches them, and the service restarts.
+
+**Tradeoff:** the web upgrade now takes the full 1–3 minutes (test gate + prebuild) instead of the current ~30 seconds, because today's faster path was faster only by skipping safety. That's the point — the elapsed timer we just added is exactly what makes the longer wait acceptable. One real downside: if `upgrade.sh` gets an interactive feature later, the wrapper would silently fail; the `[ -t 0 ]` guard pattern needs to be respected by every future contributor.

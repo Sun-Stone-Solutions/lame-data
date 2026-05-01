@@ -63,9 +63,9 @@ if ! git -C "$SCRIPT_DIR" diff --quiet 2>/dev/null; then
     fi
 fi
 
-# [1/4] Pull latest code FIRST so the re-exec below picks up any changes to
+# [1/5] Pull latest code FIRST so the re-exec below picks up any changes to
 # this script itself.
-echo "[1/4] Pulling latest code..."
+echo "[1/5] Pulling latest code..."
 
 # Snapshot runtime-state files so they survive the pull no matter what git
 # does (deletes via an untrack commit, modifies via a new seed, etc.).
@@ -110,17 +110,17 @@ if [ -z "${UPGRADE_REEXEC:-}" ]; then
     exec bash "$0" "$@"
 fi
 
-# [2/4] Update dependencies.
+# [2/5] Update dependencies.
 echo ""
-echo "[2/4] Updating dependencies..."
+echo "[2/5] Updating dependencies..."
 "$VENV_DIR/bin/pip" install -q -r "$PI_DIR/requirements.txt"
 "$VENV_DIR/bin/pip" install -q -r "$PI_DIR/requirements-dev.txt"
 echo "  Done"
 
-# [3/4] Run tests BEFORE touching the running service — a bad pull should
+# [3/5] Run tests BEFORE touching the running service — a bad pull should
 # leave the Pi on the previous working version rather than a broken one.
 echo ""
-echo "[3/4] Running tests..."
+echo "[3/5] Running tests..."
 if ! "$VENV_DIR/bin/pytest" -x --tb=short "$PI_DIR/tests"; then
     echo ""
     echo "  Tests failed. Keeping existing service running."
@@ -129,9 +129,18 @@ if ! "$VENV_DIR/bin/pytest" -x --tb=short "$PI_DIR/tests"; then
 fi
 echo "  Passed"
 
-# [4/4] Restart services.
+# [4/5] Pre-build the firmware so fleet-flash clicks skip the ~30s arduino-cli
+# compile. Best-effort: if it fails (toolchain missing, compile error), the
+# next flash will rebuild on demand. We don't want a firmware glitch to
+# block a Pi software upgrade.
 echo ""
-echo "[4/4] Restarting services..."
+echo "[4/5] Pre-building firmware (so fleet flashes are instant later)..."
+"$VENV_DIR/bin/python" "$PI_DIR/scripts/prebuild_firmware.py" || \
+    echo "  (continuing despite prebuild failure)"
+
+# [5/5] Restart services.
+echo ""
+echo "[5/5] Restarting services..."
 if [ "$EUID" -eq 0 ]; then
     systemctl restart horse-recorder
     echo "  horse-recorder restarted"
